@@ -7,15 +7,18 @@ var JWT_SECRET  = process.env.JWT_SECRET  || 'change_me_32_chars_random_string';
 var BOT_TOKEN   = process.env.INDIVIDUAL_BOT_TOKEN || '';
 var JWT_EXPIRES = '24h';
 
-// ─────────────────────────────────────────
-// Telegram initData HMAC-SHA256 tekshiruvi
-// ─────────────────────────────────────────
 function verifyTelegramData(initData) {
   try {
+    // BOT_TOKEN tekshiruvi
+    if (!BOT_TOKEN) {
+      console.error('[Auth] INDIVIDUAL_BOT_TOKEN env variable topilmadi!');
+      return null;
+    }
+
     var params = new URLSearchParams(initData);
     var hash   = params.get('hash');
     if (!hash) {
-      console.error('[Auth] hash topilmadi');
+      console.error('[Auth] initData ichida hash yo\'q');
       return null;
     }
 
@@ -34,32 +37,29 @@ function verifyTelegramData(initData) {
       .update(dataCheckString)
       .digest('hex');
 
-    console.log('[Auth] expectedHash:', expectedHash);
-    console.log('[Auth] receivedHash:', hash);
-    console.log('[Auth] BOT_TOKEN mavjud:', !!BOT_TOKEN);
-
     if (expectedHash !== hash) {
-      console.error('[Auth] Hash mos kelmadi! BOT_TOKEN noto\'g\'ri bo\'lishi mumkin.');
+      console.error('[Auth] Hash mos kelmadi. BOT_TOKEN to\'g\'riligini tekshiring.');
+      console.error('[Auth] expected:', expectedHash);
+      console.error('[Auth] received:', hash);
       return null;
     }
 
-    // auth_date tekshiruvi — 1 soatga uzaytirildi
+    // auth_date — 1 kun limit
     var authDate = parseInt(params.get('auth_date') || '0');
     var now      = Math.floor(Date.now() / 1000);
-    var diff     = now - authDate;
-    console.log('[Auth] auth_date farqi (soniya):', diff);
-
-    if (diff > 3600) {
-      console.error('[Auth] auth_date juda eski:', diff, 'soniya');
+    if (now - authDate > 86400) {
+      console.error('[Auth] auth_date juda eski:', now - authDate, 'soniya');
       return null;
     }
 
     var userStr = params.get('user');
     if (!userStr) {
-      console.error('[Auth] user parametri topilmadi');
+      console.error('[Auth] user parametri yo\'q');
       return null;
     }
+
     var user = JSON.parse(userStr);
+    console.log('[Auth] ✅ Muvaffaqiyatli kirdi:', user.id, user.first_name);
 
     return {
       userId:    String(user.id),
@@ -85,7 +85,7 @@ function verifyHandler(req, res) {
     return res.status(400).json({ error: 'initData talab qilinadi' });
   }
 
-  // Development yoki test rejim
+  // Test rejim — har doim ishlaydi
   if (initData === 'test') {
     var testUser = {
       userId:    String(process.env.SUPER_ADMIN_ID || '12345'),
