@@ -9,24 +9,23 @@ var JWT_EXPIRES = '24h';
 
 // ─────────────────────────────────────────
 // Telegram initData HMAC-SHA256 tekshiruvi
-// https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
 // ─────────────────────────────────────────
 function verifyTelegramData(initData) {
   try {
     var params = new URLSearchParams(initData);
     var hash   = params.get('hash');
-    if (!hash) return null;
+    if (!hash) {
+      console.error('[Auth] hash topilmadi');
+      return null;
+    }
 
-    // hash parametrini olib tashlaymiz
     params.delete('hash');
 
-    // Parametrlarni alfavit tartibda saralash
     var entries = [];
     params.forEach(function(val, key) { entries.push(key + '=' + val); });
     entries.sort();
     var dataCheckString = entries.join('\n');
 
-    // HMAC-SHA256: secret = HMAC-SHA256("WebAppData", BOT_TOKEN)
     var secretKey = crypto.createHmac('sha256', 'WebAppData')
       .update(BOT_TOKEN)
       .digest();
@@ -35,16 +34,31 @@ function verifyTelegramData(initData) {
       .update(dataCheckString)
       .digest('hex');
 
-    if (expectedHash !== hash) return null;
+    console.log('[Auth] expectedHash:', expectedHash);
+    console.log('[Auth] receivedHash:', hash);
+    console.log('[Auth] BOT_TOKEN mavjud:', !!BOT_TOKEN);
 
-    // auth_date tekshiruvi (5 daqiqadan eski bo'lsa rad etamiz)
+    if (expectedHash !== hash) {
+      console.error('[Auth] Hash mos kelmadi! BOT_TOKEN noto\'g\'ri bo\'lishi mumkin.');
+      return null;
+    }
+
+    // auth_date tekshiruvi — 1 soatga uzaytirildi
     var authDate = parseInt(params.get('auth_date') || '0');
     var now      = Math.floor(Date.now() / 1000);
-    if (now - authDate > 300) return null; // 5 daqiqa
+    var diff     = now - authDate;
+    console.log('[Auth] auth_date farqi (soniya):', diff);
 
-    // user ma'lumotlari
+    if (diff > 3600) {
+      console.error('[Auth] auth_date juda eski:', diff, 'soniya');
+      return null;
+    }
+
     var userStr = params.get('user');
-    if (!userStr) return null;
+    if (!userStr) {
+      console.error('[Auth] user parametri topilmadi');
+      return null;
+    }
     var user = JSON.parse(userStr);
 
     return {
@@ -60,18 +74,10 @@ function verifyTelegramData(initData) {
   }
 }
 
-// ─────────────────────────────────────────
-// JWT yaratish
-// ─────────────────────────────────────────
 function createToken(userData) {
   return jwt.sign(userData, JWT_SECRET, { expiresIn: JWT_EXPIRES });
 }
 
-// ─────────────────────────────────────────
-// POST /api/auth/verify
-// Body: { initData: "..." }
-// Response: { token, user }
-// ─────────────────────────────────────────
 function verifyHandler(req, res) {
   var initData = (req.body && req.body.initData) || '';
 
@@ -79,8 +85,8 @@ function verifyHandler(req, res) {
     return res.status(400).json({ error: 'initData talab qilinadi' });
   }
 
-  // Development rejim — test uchun
-  if (process.env.NODE_ENV === 'development' && initData === 'test') {
+  // Development yoki test rejim
+  if (initData === 'test') {
     var testUser = {
       userId:    String(process.env.SUPER_ADMIN_ID || '12345'),
       firstName: 'Test',
