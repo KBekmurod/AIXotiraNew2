@@ -1,0 +1,24 @@
+{
+  "name": "individual-bot",
+  "version": "2.0.0",
+  "description": "AIxotira — Individual Bot with Subscription System",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "telegraf": "^4.15.6",
+    "mongoose": "^7.6.3",
+    "dotenv": "^16.3.1",
+    "node-fetch": "^2.7.0",
+    "node-cron": "^3.0.3",
+    "pptxgenjs": "^3.12.0",
+    "sharp": "^0.32.6",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

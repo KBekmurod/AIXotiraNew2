@@ -1,0 +1,41 @@
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Runtime and process files
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage and test outputs
+coverage/
+.nyc_output/
+
+# Build/output folders
+dist/
+build/
+tmp/
+temp/
+
+# Caches
+.cache/
+.eslintcache
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor/IDE files
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo

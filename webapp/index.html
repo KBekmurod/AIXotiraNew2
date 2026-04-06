@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#1B2A4A">
+<title>AI Yordamchi</title>
+<link rel="manifest" href="/manifest.json">
+<style>
+:root {
+  --bg:       var(--tg-theme-bg-color, #0f1923);
+  --bg2:      var(--tg-theme-secondary-bg-color, #1a2633);
+  --text:     var(--tg-theme-text-color, #ffffff);
+  --hint:     var(--tg-theme-hint-color, #8899aa);
+  --link:     var(--tg-theme-link-color, #2E86AB);
+  --btn:      var(--tg-theme-button-color, #2E86AB);
+  --btn-text: var(--tg-theme-button-text-color, #ffffff);
+  --accent:   #2E86AB;
+  --radius:   14px;
+  --nav-h:    62px;
+  --header-h: 54px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:15px}
+
+/* ── HEADER ── */
+.header{position:fixed;top:0;left:0;right:0;height:var(--header-h);background:var(--bg2);display:flex;align-items:center;padding:0 16px;z-index:100;border-bottom:1px solid rgba(255,255,255,.06)}
+.header-title{font-size:16px;font-weight:600;flex:1}
+.header-plan{font-size:11px;color:var(--hint);background:rgba(255,255,255,.08);padding:3px 8px;border-radius:20px}
+
+/* ── BOTTOM NAV ── */
+.nav{position:fixed;bottom:0;left:0;right:0;height:var(--nav-h);background:var(--bg2);display:flex;border-top:1px solid rgba(255,255,255,.06);z-index:100}
+.nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;color:var(--hint);transition:color .2s;border:none;background:none;font-size:10px;padding:6px 0}
+.nav-item.active{color:var(--accent)}
+.nav-item svg{width:22px;height:22px}
+
+/* ── PAGES ── */
+.page{position:fixed;top:var(--header-h);left:0;right:0;bottom:var(--nav-h);overflow-y:auto;display:none;-webkit-overflow-scrolling:touch}
+.page.active{display:flex;flex-direction:column}
+
+/* ── CHAT PAGE ── */
+.chat-messages{flex:1;overflow-y:auto;padding:12px 12px 8px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:82%;padding:10px 13px;border-radius:var(--radius);line-height:1.5;word-break:break-word;font-size:14px}
+.msg b{font-weight:600}
+.msg code{background:rgba(255,255,255,.12);padding:1px 5px;border-radius:4px;font-family:monospace;font-size:13px}
+.msg pre{background:rgba(0,0,0,.3);padding:10px;border-radius:8px;overflow-x:auto;font-family:monospace;font-size:12px;margin:6px 0}
+.msg pre code{background:none;padding:0}
+.msg-user{background:var(--accent);color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
+.msg-ai{background:var(--bg2);align-self:flex-start;border-bottom-left-radius:4px}
+.msg-ai.typing .dots{display:inline-flex;gap:3px;padding:4px 0}
+.msg-ai.typing .dots span{width:6px;height:6px;background:var(--hint);border-radius:50%;animation:bounce .9s infinite}
+.msg-ai.typing .dots span:nth-child(2){animation-delay:.15s}
+.msg-ai.typing .dots span:nth-child(3){animation-delay:.3s}
+@keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
+.chat-input-wrap{padding:8px 12px;background:var(--bg2);border-top:1px solid rgba(255,255,255,.06);display:flex;gap:8px;align-items:flex-end}
+.chat-input{flex:1;background:var(--bg);border:1px solid rgba(255,255,255,.1);border-radius:22px;padding:10px 16px;color:var(--text);font-size:14px;resize:none;max-height:120px;outline:none;line-height:1.4}
+.chat-input::placeholder{color:var(--hint)}
+.chat-send{width:40px;height:40px;border-radius:50%;background:var(--accent);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:opacity .2s}
+.chat-send:disabled{opacity:.4}
+.session-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(46,134,171,.12);border-bottom:1px solid rgba(46,134,171,.2);font-size:12px;color:var(--accent)}
+.session-bar span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.session-bar button{background:none;border:none;color:var(--hint);cursor:pointer;font-size:12px;padding:2px 6px;border-radius:6px;background:rgba(255,255,255,.06)}
+
+/* ── SUHBATLAR PAGE ── */
+.list-wrap{padding:12px;display:flex;flex-direction:column;gap:8px}
+.sess-card{background:var(--bg2);border-radius:var(--radius);padding:13px 15px;cursor:pointer;display:flex;align-items:center;gap:12px;border:1px solid rgba(255,255,255,.05);transition:background .15s}
+.sess-card:active{background:rgba(255,255,255,.05)}
+.sess-icon{width:38px;height:38px;border-radius:10px;background:rgba(46,134,171,.18);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--accent)}
+.sess-info{flex:1;min-width:0}
+.sess-title{font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sess-meta{font-size:11px;color:var(--hint);margin-top:2px}
+.sess-del{background:none;border:none;color:var(--hint);cursor:pointer;padding:6px;border-radius:8px}
+.fab{position:fixed;bottom:calc(var(--nav-h) + 14px);right:16px;width:50px;height:50px;border-radius:50%;background:var(--accent);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(46,134,171,.4);z-index:50;transition:transform .15s}
+.fab:active{transform:scale(.92)}
+
+/* ── STATS PAGE ── */
+.stats-wrap{padding:16px;display:flex;flex-direction:column;gap:12px}
+.plan-card{background:var(--bg2);border-radius:var(--radius);padding:16px;border:1px solid rgba(46,134,171,.25);text-align:center}
+.plan-name{font-size:22px;font-weight:700;color:var(--accent)}
+.plan-sub{font-size:12px;color:var(--hint);margin-top:4px}
+.stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat-card{background:var(--bg2);border-radius:var(--radius);padding:14px;text-align:center;border:1px solid rgba(255,255,255,.05)}
+.stat-val{font-size:24px;font-weight:700;color:var(--accent)}
+.stat-lbl{font-size:11px;color:var(--hint);margin-top:3px}
+.limit-bar-wrap{margin-top:6px}
+.limit-bar{height:4px;background:rgba(255,255,255,.1);border-radius:2px;overflow:hidden;margin-top:4px}
+.limit-bar-fill{height:100%;background:var(--accent);border-radius:2px;transition:width .5s}
+
+/* ── NEWS PAGE ── */
+.news-card{background:var(--bg2);border-radius:var(--radius);overflow:hidden;margin-bottom:10px;cursor:pointer;border:1px solid rgba(255,255,255,.05)}
+.news-body{padding:13px 15px}
+.news-title{font-size:14px;font-weight:600;line-height:1.4}
+.news-preview{font-size:12px;color:var(--hint);margin-top:6px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.news-date{font-size:11px;color:var(--hint);margin-top:8px}
+.news-detail{padding:16px;line-height:1.7;font-size:14px}
+
+/* ── SETTINGS PAGE ── */
+.sett-wrap{padding:16px;display:flex;flex-direction:column;gap:10px}
+.sett-section{background:var(--bg2);border-radius:var(--radius);overflow:hidden;border:1px solid rgba(255,255,255,.05)}
+.sett-row{display:flex;align-items:center;padding:14px 16px;gap:12px;border-bottom:1px solid rgba(255,255,255,.05)}
+.sett-row:last-child{border-bottom:none}
+.sett-row-icon{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:17px}
+.sett-row-info{flex:1}
+.sett-row-label{font-size:14px}
+.sett-row-val{font-size:12px;color:var(--hint);margin-top:2px}
+.sett-row-action{color:var(--hint)}
+.sub-plans{display:flex;flex-direction:column;gap:8px}
+.sub-plan{background:var(--bg2);border-radius:var(--radius);padding:14px 16px;border:1px solid rgba(255,255,255,.07);display:flex;align-items:center;gap:12px}
+.sub-plan.current{border-color:rgba(46,134,171,.4);background:rgba(46,134,171,.08)}
+.sub-plan-info{flex:1}
+.sub-plan-name{font-size:15px;font-weight:600}
+.sub-plan-price{font-size:12px;color:var(--hint);margin-top:3px}
+.sub-plan-btn{background:var(--accent);color:#fff;border:none;padding:8px 14px;border-radius:20px;font-size:13px;cursor:pointer;white-space:nowrap}
+.sub-plan-btn.active{background:rgba(255,255,255,.08);color:var(--hint);cursor:default}
+
+/* ── UMUMIY ── */
+.empty{text-align:center;padding:60px 20px;color:var(--hint);font-size:14px}
+.empty svg{width:52px;height:52px;opacity:.3;margin-bottom:12px}
+.btn-primary{background:var(--accent);color:#fff;border:none;padding:12px 20px;border-radius:22px;font-size:14px;cursor:pointer;font-weight:500;width:100%;margin-top:8px}
+.btn-secondary{background:rgba(255,255,255,.07);color:var(--text);border:none;padding:11px 20px;border-radius:22px;font-size:14px;cursor:pointer;width:100%;margin-top:6px}
+.loading{text-align:center;padding:40px;color:var(--hint)}
+.spinner{width:28px;height:28px;border:2px solid rgba(255,255,255,.1);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 10px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.toast{position:fixed;bottom:calc(var(--nav-h)+16px);left:50%;transform:translateX(-50%);background:rgba(30,40,55,.95);color:#fff;padding:10px 18px;border-radius:22px;font-size:13px;z-index:999;white-space:nowrap;box-shadow:0 4px 20px rgba(0,0,0,.4);opacity:0;transition:opacity .25s}
+.toast.show{opacity:1}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:none;align-items:flex-end}
+.modal-overlay.open{display:flex}
+.modal{background:var(--bg2);border-radius:var(--radius) var(--radius) 0 0;padding:20px 16px 32px;width:100%;max-height:80vh;overflow-y:auto}
+.modal-title{font-size:16px;font-weight:600;margin-bottom:16px;text-align:center}
+.modal-input{width:100%;background:var(--bg);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:12px 14px;color:var(--text);font-size:14px;outline:none;margin-bottom:10px}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-title" id="headerTitle">AI Yordamchi</div>
+  <div class="header-plan" id="headerPlan">Free</div>
+</div>
+
+<!-- PAGE: CHAT -->
+<div class="page active" id="page-chat">
+  <div class="session-bar" id="sessionBar" style="display:none">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
+    <span id="sessionBarTitle">Suhbat</span>
+    <button onclick="exitSession()">✕ Chiqish</button>
+  </div>
+  <div class="chat-messages" id="chatMessages"></div>
+  <div class="chat-input-wrap">
+    <textarea class="chat-input" id="chatInput" placeholder="Xabar yozing..." rows="1"></textarea>
+    <button class="chat-send" id="chatSend" onclick="sendMessage()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- PAGE: SUHBATLAR -->
+<div class="page" id="page-sessions">
+  <div class="list-wrap" id="sessionsList"></div>
+  <button class="fab" onclick="openNewSessionModal()" title="Yangi suhbat">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+  </button>
+</div>
+
+<!-- PAGE: STATS -->
+<div class="page" id="page-stats">
+  <div class="stats-wrap" id="statsWrap"></div>
+</div>
+
+<!-- PAGE: NEWS -->
+<div class="page" id="page-news">
+  <div class="list-wrap" id="newsList"></div>
+</div>
+
+<!-- PAGE: SETTINGS -->
+<div class="page" id="page-settings">
+  <div class="sett-wrap" id="settWrap"></div>
+</div>
+
+<!-- BOTTOM NAV -->
+<nav class="nav">
+  <button class="nav-item active" onclick="showPage('chat',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+    Suhbat
+  </button>
+  <button class="nav-item" onclick="showPage('sessions',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+    Fayllar
+  </button>
+  <button class="nav-item" onclick="showPage('stats',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    Statistika
+  </button>
+  <button class="nav-item" onclick="showPage('news',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 22h16a2 2 0 002-2V4a2 2 0 00-2-2H4a2 2 0 00-2 2v16a2 2 0 002 2z"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="12" y2="14"/></svg>
+    Yangiliklar
+  </button>
+  <button class="nav-item" onclick="showPage('settings',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+    Sozlamalar
+  </button>
+</nav>
+
+<!-- MODAL: Yangi suhbat -->
+<div class="modal-overlay" id="newSessionModal" onclick="if(event.target===this)closeModal('newSessionModal')">
+  <div class="modal">
+    <div class="modal-title">Yangi suhbat fayli</div>
+    <input class="modal-input" id="newSessionTitle" placeholder="Sarlavha (ixtiyoriy)" maxlength="40">
+    <button class="btn-primary" onclick="createNewSession()">Yaratish</button>
+    <button class="btn-secondary" onclick="closeModal('newSessionModal')">Bekor</button>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════
+// GLOBAL HOLAT
+// ═══════════════════════════════════════════
+var API    = '';          // BASE URL (dinamik)
+var TOKEN  = '';
+var USER   = {};
+var BOT    = {};
+var activeSessionId   = null;
+var activeSessionTitle = '';
+var isSending = false;
+
+// ═══════════════════════════════════════════
+// INIT — Telegram WebApp
+// ═══════════════════════════════════════════
+window.addEventListener('DOMContentLoaded', async function() {
+  var tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+  }
+
+  API = window.location.origin;
+
+  var initData = (tg && tg.initData) ? tg.initData : 'test';
+
+  try {
+    var r = await fetch(API + '/api/auth/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData })
+    });
+    var d = await r.json();
+    if (!d.token) { showError('Kirish xatosi'); return; }
+    TOKEN = d.token;
+    USER  = d.user;
+  } catch(e) {
+    showError('Server bilan aloqa yo\'q');
+    return;
+  }
+
+  // Foydalanuvchi ma'lumotlari
+  try {
+    var info = await apiFetch('/api/user/info');
+    BOT = info;
+    document.getElementById('headerTitle').textContent = info.botName || 'AI Yordamchi';
+    document.getElementById('headerPlan').textContent  = info.plan ? info.plan.charAt(0).toUpperCase()+info.plan.slice(1) : 'Free';
+  } catch(e) {}
+
+  loadChat();
+
+  // Auto-resize textarea
+  var inp = document.getElementById('chatInput');
+  inp.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+  });
+  inp.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+});
+
+// ═══════════════════════════════════════════
+// API HELPER
+// ═══════════════════════════════════════════
+async function apiFetch(path, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({ 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' }, opts.headers || {});
+  var r = await fetch(API + path, opts);
+  if (r.status === 401) { showToast('Sessiya tugadi. Qayta oching.'); throw new Error('401'); }
+  var d = await r.json();
+  if (d.error) throw new Error(d.error);
+  return d;
+}
+
+// ═══════════════════════════════════════════
+// NAVIGATSIYA
+// ═══════════════════════════════════════════
+function showPage(name, btn) {
+  document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
+  document.querySelectorAll('.nav-item').forEach(function(b) { b.classList.remove('active'); });
+  document.getElementById('page-' + name).classList.add('active');
+  if (btn) btn.classList.add('active');
+
+  if (name === 'sessions') loadSessions();
+  if (name === 'stats')    loadStats();
+  if (name === 'news')     loadNews();
+  if (name === 'settings') loadSettings();
+}
+
+// ═══════════════════════════════════════════
+// CHAT
+// ═══════════════════════════════════════════
+async function loadChat() {
+  var el = document.getElementById('chatMessages');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  try {
+    var url = '/api/chat' + (activeSessionId ? '?sessionId='+activeSessionId : '');
+    var d   = await apiFetch(url);
+    renderMessages(d.messages || []);
+  } catch(e) {
+    el.innerHTML = '<div class="empty">Xabarlar yuklanmadi</div>';
+  }
+}
+
+function renderMessages(msgs) {
+  var el = document.getElementById('chatMessages');
+  if (!msgs.length) {
+    el.innerHTML = '<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg><div>Suhbat boshlang!</div></div>';
+    return;
+  }
+  el.innerHTML = '';
+  for (var i = 0; i < msgs.length; i++) {
+    appendMessage(msgs[i].role, msgs[i].content, false);
+  }
+  scrollBottom();
+}
+
+function appendMessage(role, content, scroll) {
+  var el  = document.getElementById('chatMessages');
+  var div = document.createElement('div');
+  div.className = 'msg ' + (role === 'user' ? 'msg-user' : 'msg-ai');
+  div.innerHTML = formatContent(content);
+  // Remove empty placeholder if any
+  var emp = el.querySelector('.empty');
+  if (emp) emp.remove();
+  el.appendChild(div);
+  if (scroll !== false) scrollBottom();
+  return div;
+}
+
+function formatContent(text) {
+  if (!text) return '';
+  // Oddiy HTML escape bo'lgan matnni ko'rsatish
+  return text
+    .replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&')
+    .replace(/<(?!\/?(?:b|i|code|pre|s|u)[ >])[^>]*>/g,'');
+}
+
+function scrollBottom() {
+  var el = document.getElementById('chatMessages');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function sendMessage() {
+  if (isSending) return;
+  var inp  = document.getElementById('chatInput');
+  var text = inp.value.trim();
+  if (!text) return;
+
+  isSending = true;
+  document.getElementById('chatSend').disabled = true;
+  inp.value = ''; inp.style.height = 'auto';
+
+  // Foydalanuvchi xabari
+  appendMessage('user', escapeHtml(text), true);
+
+  // Typing indicator
+  var aiDiv = appendMessage('assistant', '<div class="dots"><span></span><span></span><span></span></div>', true);
+  aiDiv.classList.add('typing');
+
+  try {
+    var body = JSON.stringify({ message: text, sessionId: activeSessionId || undefined });
+    var r = await fetch(API + '/api/chat', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
+      body: body
+    });
+
+    var reader = r.body.getReader();
+    var dec    = new TextDecoder();
+    var aiText = '';
+    var isHtml = false;
+
+    aiDiv.classList.remove('typing');
+    aiDiv.innerHTML = '';
+
+    while (true) {
+      var chunk = await reader.read();
+      if (chunk.done) break;
+      var lines = dec.decode(chunk.value).split('\n');
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.startsWith('data:')) {
+          try {
+            var ev = JSON.parse(line.slice(5));
+            if (ev.text) {
+              aiText += ev.text;
+              aiDiv.innerHTML = formatContent(aiText);
+              scrollBottom();
+            }
+            if (ev.html !== undefined) isHtml = ev.html;
+            if (ev.message) { aiDiv.innerHTML = '<i style="color:var(--hint)">' + escapeHtml(ev.message) + '</i>'; }
+          } catch(_) {}
+        }
+      }
+    }
+  } catch(e) {
+    aiDiv.innerHTML = '<i style="color:var(--hint)">Xato yuz berdi. Qayta urining.</i>';
+  }
+
+  isSending = false;
+  document.getElementById('chatSend').disabled = false;
+  inp.focus();
+}
+
+function exitSession() {
+  activeSessionId    = null;
+  activeSessionTitle = '';
+  document.getElementById('sessionBar').style.display = 'none';
+  loadChat();
+}
+
+// ═══════════════════════════════════════════
+// SESSIONS
+// ═══════════════════════════════════════════
+async function loadSessions() {
+  var el = document.getElementById('sessionsList');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  try {
+    var d = await apiFetch('/api/sessions');
+    var list = d.sessions || [];
+    if (!list.length) {
+      el.innerHTML = '<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><div>Hali suhbat fayli yo\'q</div></div>';
+      return;
+    }
+    el.innerHTML = '';
+    list.forEach(function(s) {
+      var cnt = Math.floor((s.messages||[]).length / 2);
+      var d2  = new Date(s.updatedAt).toLocaleDateString('ru-RU');
+      var isAct = activeSessionId === String(s._id);
+      var card = document.createElement('div');
+      card.className = 'sess-card';
+      card.innerHTML =
+        '<div class="sess-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div>' +
+        '<div class="sess-info"><div class="sess-title">'+(isAct?'▶️ ':'')+escapeHtml(s.title)+'</div><div class="sess-meta">'+cnt+' savol-javob · '+d2+'</div></div>' +
+        '<button class="sess-del" onclick="deleteSession(\''+s._id+'\',event)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg></button>';
+      card.onclick = function(e) {
+        if (e.target.closest('.sess-del')) return;
+        openSession(s._id, s.title);
+      };
+      el.appendChild(card);
+    });
+  } catch(e) {
+    el.innerHTML = '<div class="empty">Yuklanmadi</div>';
+  }
+}
+
+function openSession(id, title) {
+  activeSessionId    = id;
+  activeSessionTitle = title;
+  document.getElementById('sessionBarTitle').textContent = title;
+  document.getElementById('sessionBar').style.display = 'flex';
+  showPage('chat', document.querySelector('.nav-item'));
+  document.querySelectorAll('.nav-item')[0].classList.add('active');
+  loadChat();
+}
+
+function openNewSessionModal() {
+  document.getElementById('newSessionTitle').value = '';
+  document.getElementById('newSessionModal').classList.add('open');
+  setTimeout(function(){document.getElementById('newSessionTitle').focus();}, 200);
+}
+
+async function createNewSession() {
+  var title = document.getElementById('newSessionTitle').value.trim();
+  var now   = new Date();
+  var auto  = 'Suhbat ' + String(now.getDate()).padStart(2,'0') + '.' + String(now.getMonth()+1).padStart(2,'0') + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+  try {
+    var d = await apiFetch('/api/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ title: title || auto })
+    });
+    closeModal('newSessionModal');
+    openSession(d.session._id, d.session.title);
+  } catch(e) {
+    showToast(e.message || 'Xato');
+  }
+}
+
+async function deleteSession(id, e) {
+  e.stopPropagation();
+  if (!confirm('Bu suhbatni o\'chirasizmi?')) return;
+  try {
+    await apiFetch('/api/sessions/' + id, { method: 'DELETE' });
+    if (activeSessionId === id) exitSession();
+    loadSessions();
+    showToast('O\'chirildi');
+  } catch(e) {
+    showToast('Xato');
+  }
+}
+
+// ═══════════════════════════════════════════
+// STATS
+// ═══════════════════════════════════════════
+async function loadStats() {
+  var el = document.getElementById('statsWrap');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  try {
+    var d = await apiFetch('/api/stats');
+    var h = '';
+
+    // Plan kartasi
+    var sub = d.subscription;
+    h += '<div class="plan-card"><div class="plan-name">'+d.planName+'</div>';
+    if (sub) h += '<div class="plan-sub">'+sub.daysLeft+' kun qoldi · '+sub.expiresAt+'</div>';
+    else h += '<div class="plan-sub">Bepul tarif</div>';
+    h += '</div>';
+
+    // Statistika grid
+    h += '<div class="stats-grid">';
+    h += statCard(d.counts.messages, 'Suhbat', '💬');
+    h += statCard(d.counts.sessions, 'Fayl', '📂');
+    h += statCard(d.counts.ppts,     'PPT', '🎨');
+    h += statCard(d.totalMessages,   'Jami xabar', '📊');
+    h += '</div>';
+
+    // Oylik limitlar (egasi uchun)
+    if (d.monthly && d.isOwner) {
+      h += '<div class="sett-section">';
+      h += limitRow('AI suhbat', d.monthly.ai, d.limits.ai);
+      h += limitRow('Prezentatsiya', d.monthly.ppt, d.limits.ppt);
+      if (d.limits.pptPro > 0) h += limitRow('Pro PPT', d.monthly.pptPro, d.limits.pptPro);
+      h += '</div>';
+    }
+
+    el.innerHTML = h;
+  } catch(e) {
+    el.innerHTML = '<div class="empty">Yuklanmadi</div>';
+  }
+}
+
+function statCard(val, lbl, icon) {
+  return '<div class="stat-card"><div class="stat-val">'+(val||0)+'</div><div class="stat-lbl">'+icon+' '+lbl+'</div></div>';
+}
+function limitRow(lbl, used, total) {
+  var pct = total ? Math.min(100, Math.round((used/total)*100)) : 0;
+  var totalStr = total ? total : '∞';
+  return '<div class="sett-row"><div class="sett-row-info"><div class="sett-row-label">'+lbl+'</div><div class="limit-bar-wrap"><div style="font-size:11px;color:var(--hint);margin-top:2px">'+used+' / '+totalStr+'</div><div class="limit-bar"><div class="limit-bar-fill" style="width:'+pct+'%"></div></div></div></div></div>';
+}
+
+// ═══════════════════════════════════════════
+// NEWS
+// ═══════════════════════════════════════════
+var newsPage = 0;
+var newsLoading = false;
+
+async function loadNews(reset) {
+  var el = document.getElementById('newsList');
+  if (reset) { newsPage = 0; el.innerHTML = ''; }
+  if (newsLoading) return;
+  newsLoading = true;
+  if (!newsPage) el.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  try {
+    var d = await apiFetch('/api/news?page=' + newsPage + '&limit=10');
+    if (!newsPage) el.innerHTML = '';
+    if (!(d.news && d.news.length)) {
+      el.innerHTML = '<div class="empty">Yangiliklar yo\'q</div>'; newsLoading = false; return;
+    }
+    d.news.forEach(function(n) {
+      var card = document.createElement('div');
+      card.className = 'news-card';
+      var dt = new Date(n.createdAt).toLocaleDateString('ru-RU');
+      card.innerHTML = '<div class="news-body"><div class="news-title">'+escapeHtml(n.title)+'</div><div class="news-preview">'+escapeHtml(n.body.slice(0,120))+'</div><div class="news-date">'+dt+'</div></div>';
+      card.onclick = function() { openNewsDetail(n); };
+      el.appendChild(card);
+    });
+    if (d.hasMore) {
+      newsPage++;
+      var more = document.createElement('button');
+      more.className = 'btn-secondary';
+      more.style.margin = '0 12px 12px';
+      more.textContent = 'Ko\'proq ko\'rish';
+      more.onclick = function() { more.remove(); loadNews(); };
+      el.appendChild(more);
+    }
+  } catch(e) {
+    el.innerHTML = '<div class="empty">Yuklanmadi</div>';
+  }
+  newsLoading = false;
+}
+
+function openNewsDetail(n) {
+  var dt = new Date(n.createdAt).toLocaleDateString('ru-RU');
+  showModal('<b>'+escapeHtml(n.title)+'</b><div style="font-size:11px;color:var(--hint);margin:6px 0 14px">'+dt+'</div><div style="line-height:1.7;font-size:14px">'+escapeHtml(n.body)+'</div>'+(n.footer?'<div style="font-size:12px;color:var(--hint);margin-top:12px">'+escapeHtml(n.footer)+'</div>':''));
+}
+
+// ═══════════════════════════════════════════
+// SETTINGS
+// ═══════════════════════════════════════════
+async function loadSettings() {
+  var el = document.getElementById('settWrap');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  try {
+    var sub = await apiFetch('/api/subscription');
+    var h   = '';
+
+    // Hozirgi tarif
+    h += '<div class="sett-section">';
+    h += '<div class="sett-row"><div class="sett-row-icon" style="background:rgba(46,134,171,.15)">⭐</div><div class="sett-row-info"><div class="sett-row-label">Tarif</div><div class="sett-row-val">'+sub.planName+'</div></div></div>';
+    if (sub.subscription && sub.subscription.status === 'active') {
+      h += '<div class="sett-row"><div class="sett-row-icon" style="background:rgba(46,200,100,.15)">✅</div><div class="sett-row-info"><div class="sett-row-label">Obuna faol</div><div class="sett-row-val">'+sub.subscription.daysLeft+' kun qoldi</div></div></div>';
+    }
+    h += '</div>';
+
+    // Tariflar
+    if (sub.currentPlan === 'free' || (sub.subscription && sub.subscription.status !== 'active')) {
+      h += '<div style="font-size:13px;font-weight:600;color:var(--hint);margin:8px 4px 6px">Tariflar</div>';
+      h += '<div class="sub-plans">';
+      sub.plans.forEach(function(p) {
+        h += '<div class="sub-plan'+(sub.currentPlan===p.key?' current':'')+'"><div class="sub-plan-info"><div class="sub-plan-name">'+p.name+'</div><div class="sub-plan-price">'+p.price.discounted+' / oy</div></div>';
+        if (sub.currentPlan !== p.key) {
+          h += '<button class="sub-plan-btn" onclick="orderPlan(\''+p.key+'\',\''+p.name+'\',\''+p.price.discounted+'\')">Ulash</button>';
+        } else {
+          h += '<button class="sub-plan-btn active">Faol</button>';
+        }
+        h += '</div>';
+      });
+      h += '</div>';
+    }
+
+    // Karta ma'lumoti
+    if (sub.cardNumber) {
+      h += '<div class="sett-section" style="margin-top:10px"><div class="sett-row"><div class="sett-row-icon" style="background:rgba(255,200,0,.12)">💳</div><div class="sett-row-info"><div class="sett-row-label">To\'lov kartasi</div><div class="sett-row-val">'+escapeHtml(sub.cardNumber)+'</div></div><button onclick="copyText(\''+sub.cardNumber+'\')" style="background:none;border:none;color:var(--hint);cursor:pointer">📋</button></div></div>';
+    }
+
+    el.innerHTML = h;
+  } catch(e) {
+    el.innerHTML = '<div class="empty">Yuklanmadi</div>';
+  }
+}
+
+function orderPlan(key, name, price) {
+  var tg = window.Telegram && window.Telegram.WebApp;
+  var msg = name + ' obunani rasmiylashtirmoqchiman. Narx: ' + price + ' so\'m/oy';
+  if (tg && tg.openTelegramLink) {
+    tg.openTelegramLink('https://t.me/' + (window._adminUsername||'') + '?text=' + encodeURIComponent(msg));
+  } else {
+    window.open('https://t.me/' + (window._adminUsername||'') + '?text=' + encodeURIComponent(msg));
+  }
+}
+
+// ═══════════════════════════════════════════
+// MODAL HELPER
+// ═══════════════════════════════════════════
+function showModal(html) {
+  var ov = document.createElement('div');
+  ov.className = 'modal-overlay open';
+  ov.innerHTML = '<div class="modal"><div class="news-detail">'+html+'</div><button class="btn-secondary" onclick="this.closest(\'.modal-overlay\').remove()">Yopish</button></div>';
+  ov.onclick = function(e) { if(e.target===ov) ov.remove(); };
+  document.body.appendChild(ov);
+}
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+// ═══════════════════════════════════════════
+// YORDAMCHI
+// ═══════════════════════════════════════════
+function showToast(msg, dur) {
+  var el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  setTimeout(function(){el.classList.remove('show');}, dur||2200);
+}
+function showError(msg) {
+  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--hint);text-align:center;padding:20px"><div><div style="font-size:32px;margin-bottom:12px">⚠️</div><div>'+msg+'</div></div></div>';
+}
+function escapeHtml(t) {
+  return String(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function copyText(t) {
+  navigator.clipboard && navigator.clipboard.writeText(t);
+  showToast('Nusxalandi');
+}
+</script>
+</body>
+</html>
