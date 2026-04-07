@@ -901,86 +901,111 @@ async function launchUserBot(botConfig) {
   // ═══════════════════════════════════════════════
   // ⚙️ SOZLAMALAR — FIX #4: barcha foydalanuvchilar ko'ra oladi
   // ═══════════════════════════════════════════════
-  bot.hears(['⚙️ Sozlamalar','⚙️ Настройки','⚙️ Settings'], async (ctx) => {
-    await notifySessionSavedIfNeeded(ctx);
-    var uid  = String(ctx.from.id);
+  // ── Sozlamalar asosiy menyu — 2 bo'lim ──
+  async function showSettingsMain(ctx, edit) {
+    var uid   = String(ctx.from.id);
     var isOwn = uid === String(botConfig.ownerTelegramId);
-    var l    = lang(ctx);
-    var fresh = await UserBot.findById(botConfig._id);
-    var plan  = fresh ? (fresh.currentPlan||'free') : 'free';
-    var maxP  = PLAN_LIMITS[plan].personas;
-    var cnt   = await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
-    var settTitle = l==='uz'
-      ? '⚙️ Sozlamalar\n\nMening modellarim: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n\nModel — bu AI ning suhbat uslubi.'
+    var l     = lang(ctx);
+    var title = l==='uz'
+      ? '⚙️ Sozlamalar\n\nQuyidagi bo\'limlardan birini tanlang:'
       : l==='en'
-      ? '⚙️ Settings\n\nMy personas: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n\nA persona is an AI conversation style.'
-      : '⚙️ Настройки\n\nМои персоны: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n\nПерсона — стиль общения AI.';
-    var settBtns = [];
-    // Egasi uchun bot sozlamalari ham ko'rinadi
+      ? '⚙️ Settings\n\nChoose a section:'
+      : '⚙️ Настройки\n\nВыберите раздел:';
+    var btns = [];
     if (isOwn) {
-      settBtns.push([Markup.button.callback(t('btn_bot_settings',l),'sett_bot_config')]);
+      btns.push([Markup.button.callback(
+        l==='uz'?'🤖 Bot sozlamalari':l==='en'?'🤖 Bot settings':'🤖 Настройки бота',
+        'sett_section_bot'
+      )]);
     }
-    settBtns.push(
-      [Markup.button.callback(l==='uz'?"🧠 Modellarni ko'rish":l==='en'?'🧠 View personas':'🧠 Просмотр персон','show_personas')],
-      [Markup.button.callback(l==='uz'?'➕ Yangi model yaratish':l==='en'?'➕ Create new persona':'➕ Создать персону','create_persona')],
-      [Markup.button.callback(l==='uz'?'📋 Tayyor modellar':l==='en'?'📋 Ready personas':'📋 Готовые персоны','builtin_personas')],
-      [Markup.button.callback(t('btn_change_lang',l),'change_interface_lang')],
+    btns.push(
+      [Markup.button.callback(
+        l==='uz'?'👤 Interfeys sozlamalari':l==='en'?'👤 Interface settings':'👤 Настройки интерфейса',
+        'sett_section_interface'
+      )],
       [Markup.button.callback(t('btn_close',l),'zone_close')]
     );
-    await openZone(ctx,settTitle,Markup.inlineKeyboard(settBtns));
+    if (edit) await ctx.editMessageText(title, Markup.inlineKeyboard(btns));
+    else      await openZone(ctx, title, Markup.inlineKeyboard(btns));
+  }
+
+  bot.hears(['⚙️ Sozlamalar','⚙️ Настройки','⚙️ Settings'], async (ctx) => {
+    await notifySessionSavedIfNeeded(ctx);
+    await showSettingsMain(ctx, false);
   });
 
-
-  // Bot sozlamalari — Sozlamalar bo'limidan
-  bot.action('sett_bot_config', async (ctx) => {
+  // ── 1-bo'lim: Bot sozlamalari (faqat egasi) ──
+  bot.action('sett_section_bot', async (ctx) => {
     await ctx.answerCbQuery();
     var l = lang(ctx);
     var persMap = {
-      friendly:     {uz:'Samimiy',     en:'Friendly',    ru:'Дружелюбный'},
+      friendly:     {uz:'Samimiy',      en:'Friendly',    ru:'Дружелюбный'},
       professional: {uz:'Professional', en:'Professional', ru:'Профессиональный'},
-      funny:        {uz:'Quvnoq',      en:'Funny',       ru:'Весёлый'},
-      strict:       {uz:'Qisqa va aniq',en:'Concise',    ru:'Краткий'}
+      funny:        {uz:'Quvnoq',       en:'Funny',        ru:'Весёлый'},
+      strict:       {uz:'Qisqa va aniq',en:'Concise',      ru:'Краткий'}
     };
-    var persObj = persMap[botConfig.personality]||persMap.friendly;
-    var pers    = persObj[l]||persObj.ru;
-    var infoText = l==='uz'
-      ? '🤖 Bot sozlamalari\n\nNom: '+esc(botConfig.botName)+'\nUslub: '+pers
+    var persObj = persMap[botConfig.personality] || persMap.friendly;
+    var pers    = persObj[l] || persObj.ru;
+    var hasPrompt = !!(botConfig.extraInstructions && botConfig.extraInstructions.trim());
+    var text = l==='uz'
+      ? '🤖 Bot sozlamalari\n\n✏️ Nom: '+esc(botConfig.botName)+'\n🎭 Uslub: '+pers+'\n🧬 Prompt: '+(hasPrompt?'Bor ✅':'Yo\'q')
       : l==='en'
-      ? '🤖 Bot settings\n\nName: '+esc(botConfig.botName)+'\nStyle: '+pers
-      : '🤖 Настройки бота\n\nИмя: '+esc(botConfig.botName)+'\nСтиль: '+pers;
-    await ctx.editMessageText(infoText, Markup.inlineKeyboard([
-      [Markup.button.callback('✏️ '+(l==='uz'?'Bot nomi':l==='en'?'Bot name':'Имя бота'),'edit_name'),
+      ? '🤖 Bot settings\n\n✏️ Name: '+esc(botConfig.botName)+'\n🎭 Style: '+pers+'\n🧬 Prompt: '+(hasPrompt?'Set ✅':'Not set')
+      : '🤖 Настройки бота\n\n✏️ Имя: '+esc(botConfig.botName)+'\n🎭 Стиль: '+pers+'\n🧬 Промпт: '+(hasPrompt?'Есть ✅':'Нет');
+    await ctx.editMessageText(text, Markup.inlineKeyboard([
+      [Markup.button.callback('✏️ '+(l==='uz'?'Bot nomi':l==='en'?'Bot name':'Имя'),'edit_name'),
        Markup.button.callback('🎭 '+(l==='uz'?'Uslub':l==='en'?'Style':'Стиль'),'edit_personality')],
-      [Markup.button.callback('◀️ '+(l==='uz'?'Orqaga':l==='en'?'Back':'Назад'),'sett_back')]
+      [Markup.button.callback('🧬 Promptizatsiya','prz_main')],
+      [Markup.button.callback('◀️ '+(l==='uz'?'Orqaga':l==='en'?'Back':'Назад'),'sett_main_back')]
     ]));
   });
 
-  bot.action('sett_back', async (ctx) => {
+  // ── 2-bo'lim: Interfeys sozlamalari (hamma uchun) ──
+  bot.action('sett_section_interface', async (ctx) => {
     await ctx.answerCbQuery();
-    // Sozlamalar menyusiga qaytish
     var uid   = String(ctx.from.id);
-    var isOwn = uid === String(botConfig.ownerTelegramId);
     var l     = lang(ctx);
     var fresh = await UserBot.findById(botConfig._id);
     var plan  = fresh ? (fresh.currentPlan||'free') : 'free';
     var maxP  = PLAN_LIMITS[plan].personas;
     var cnt   = await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
-    var settTitle = l==='uz'
-      ? '⚙️ Sozlamalar\n\nMening modellarim: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n\nModel — bu AI ning suhbat uslubi.'
+    var text  = l==='uz'
+      ? '👤 Interfeys sozlamalari\n\n🧠 Modellarim: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n🌐 Til: '+({uz:"O'zbek",ru:'Rus',en:'Ingliz'}[botConfig.language]||"O'zbek")
       : l==='en'
-      ? '⚙️ Settings\n\nMy personas: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n\nA persona is an AI conversation style.'
-      : '⚙️ Настройки\n\nМои персоны: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n\nПерсона — стиль общения AI.';
-    var settBtns = [];
-    if (isOwn) settBtns.push([Markup.button.callback(t('btn_bot_settings',l),'sett_bot_config')]);
-    settBtns.push(
-      [Markup.button.callback(l==='uz'?"🧠 Modellarni ko'rish":l==='en'?'🧠 View personas':'🧠 Просмотр персон','show_personas')],
-      [Markup.button.callback(l==='uz'?'➕ Yangi model yaratish':l==='en'?'➕ Create new persona':'➕ Создать персону','create_persona')],
-      [Markup.button.callback(l==='uz'?'📋 Tayyor modellar':l==='en'?'📋 Ready personas':'📋 Готовые персоны','builtin_personas')],
+      ? '👤 Interface settings\n\n🧠 Personas: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n🌐 Language: '+({uz:'Uzbek',ru:'Russian',en:'English'}[botConfig.language]||'Uzbek')
+      : '👤 Настройки интерфейса\n\n🧠 Персоны: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n🌐 Язык: '+({uz:'Узбекский',ru:'Русский',en:'Английский'}[botConfig.language]||'Узбекский');
+    await ctx.editMessageText(text, Markup.inlineKeyboard([
+      [Markup.button.callback(l==='uz'?"🧠 Modellarni ko'rish":l==='en'?'🧠 View personas':'🧠 Персоны','show_personas')],
+      [Markup.button.callback(l==='uz'?'➕ Yangi model':l==='en'?'➕ New persona':'➕ Новая персона','create_persona'),
+       Markup.button.callback(l==='uz'?'📋 Tayyor modellar':l==='en'?'📋 Ready':'📋 Готовые','builtin_personas')],
       [Markup.button.callback(t('btn_change_lang',l),'change_interface_lang')],
-      [Markup.button.callback(t('btn_close',l),'zone_close')]
-    );
-    await ctx.editMessageText(settTitle, Markup.inlineKeyboard(settBtns));
+      [Markup.button.callback(l==='uz'?'🗑 Xotirani tozalash':l==='en'?'🗑 Clear memory':'🗑 Очистить память','confirm_clear_from_sett')],
+      [Markup.button.callback('◀️ '+(l==='uz'?'Orqaga':l==='en'?'Back':'Назад'),'sett_main_back')]
+    ]));
   });
+
+  bot.action('sett_main_back', async (ctx) => {
+    await ctx.answerCbQuery();
+    await showSettingsMain(ctx, true);
+  });
+
+  // Tozalash — sozlamalardan
+  bot.action('confirm_clear_from_sett', async (ctx) => {
+    await ctx.answerCbQuery();
+    var l = lang(ctx);
+    await ctx.editMessageText(
+      l==='uz'?'🗑 Asosiy xotirani tozalashni tasdiqlaysizmi?\n\n(Qaytarib bo\'lmaydi)':
+      l==='en'?'🗑 Clear main memory? (Cannot be undone)':
+      '🗑 Очистить основную память? (Нельзя отменить)',
+      Markup.inlineKeyboard([
+        [Markup.button.callback(l==='uz'?'✅ Ha, tozala':l==='en'?'✅ Yes, clear':'✅ Да, очистить','confirm_clear'),
+         Markup.button.callback(l==='uz'?'❌ Bekor':l==='en'?'❌ Cancel':'❌ Отмена','sett_section_interface')]
+      ])
+    );
+  });
+
+
+
 
   bot.action('show_personas', async (ctx) => {
     await ctx.answerCbQuery();

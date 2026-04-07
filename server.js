@@ -11,6 +11,11 @@ const { getStats }        = require('./api/stats');
 const { getNews, getOneNews } = require('./api/news');
 const { getPpts, createPpt }  = require('./api/ppt');
 const { getSubscription } = require('./api/subscription');
+const {
+  getBotSettings, updateBotSettings,
+  getPersonas, createPersona, deletePersona,
+  clearMemory, updateLanguage
+} = require('./api/settings');
 
 var app = express();
 
@@ -73,6 +78,19 @@ app.post('/api/ppt', createPpt);
 
 // Obuna
 app.get('/api/subscription', getSubscription);
+
+// Sozlamalar — bot
+app.get('/api/settings/bot',     getBotSettings);
+app.patch('/api/settings/bot',   updateBotSettings);
+
+// Sozlamalar — persona
+app.get('/api/settings/personas',          getPersonas);
+app.post('/api/settings/personas',         createPersona);
+app.delete('/api/settings/personas/:id',   deletePersona);
+
+// Sozlamalar — til va tozalash
+app.patch('/api/settings/language', updateLanguage);
+app.post('/api/settings/clear',     clearMemory);
 
 // SPA fallback — barcha noma'lum GET so'rovlar index.html ga
 app.get('*', function(req, res) {
