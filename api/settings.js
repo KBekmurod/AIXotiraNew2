@@ -3,6 +3,7 @@
 const UserBot     = require('../models/UserBot');
 const Persona     = require('../models/Persona');
 const ChatHistory = require('../models/ChatHistory');
+const { checkPersonaLimit, limitError } = require('./helpers');
 
 const BUILTIN_PERSONAS = [
   { key:'teacher',  name:'O\'qituvchi',   emoji:'📚', desc:'Sabr bilan tushuntiradi', prompt:'Sen tajribali o\'qituvchisan. Har bir narsani oddiy va tushunarli qilib tushuntirib berasan.' },
@@ -100,15 +101,10 @@ async function createPersona(req, res) {
 
     // Limit tekshiruvi
     var botDoc = await UserBot.findById(req.botId);
-    var LIMITS = { free:0, starter:3, pro:10, premium:Infinity };
-    var plan   = botDoc ? (botDoc.currentPlan || 'free') : 'free';
-    var limit  = LIMITS[plan];
-    if (limit === 0) return res.status(403).json({ error: 'Free tarifda model yaratib bo\'lmaydi', code: 'PLAN' });
-
+    var plan = botDoc ? (botDoc.currentPlan || 'free') : 'free';
     var used = await Persona.countDocuments({ botId: req.botId, userTelegramId: uid, isActive: true });
-    if (limit !== Infinity && used >= limit) {
-      return res.status(403).json({ error: 'Persona limiti tugadi', code: 'LIMIT' });
-    }
+    var lc   = checkPersonaLimit(botDoc, used);
+    if (!lc.allowed) return limitError(res, lc);
 
     var personaData;
 

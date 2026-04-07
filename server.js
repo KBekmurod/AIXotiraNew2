@@ -9,8 +9,8 @@ const { getChat, postChat, deleteChat } = require('./api/chat');
 const { getSessions, getSession, createSession, deleteSession } = require('./api/sessions');
 const { getStats }        = require('./api/stats');
 const { getNews, getOneNews } = require('./api/news');
-const { getPpts, createPpt }  = require('./api/ppt');
-const { getSubscription } = require('./api/subscription');
+const { getPpts, createPpt, deletePpt } = require('./api/ppt');
+const { getSubscription, createOrder, cancelOrder } = require('./api/subscription');
 const {
   getBotSettings, updateBotSettings,
   getPersonas, createPersona, deletePersona,
@@ -73,11 +73,14 @@ app.get('/api/news',     getNews);
 app.get('/api/news/:id', getOneNews);
 
 // Prezentatsiya
-app.get('/api/ppt',  getPpts);
-app.post('/api/ppt', createPpt);
+app.get('/api/ppt',           getPpts);
+app.post('/api/ppt',          createPpt);
+app.delete('/api/ppt/:id',    deletePpt);
 
 // Obuna
-app.get('/api/subscription', getSubscription);
+app.get('/api/subscription',           getSubscription);
+app.post('/api/subscription',          createOrder);
+app.delete('/api/subscription/pending', cancelOrder);
 
 // Sozlamalar — bot
 app.get('/api/settings/bot',     getBotSettings);
