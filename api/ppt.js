@@ -42,8 +42,11 @@ async function createPpt(req, res) {
     if (!botDoc) return res.status(503).json({ error: 'Bot topilmadi' });
     await resetMonthlyIfNeeded(botDoc);
 
-    var lc = checkPptLimit(botDoc, isPro);
-    if (!lc.allowed) return limitError(res, lc);
+    // PPT limit faqat bot egasi uchun tekshiriladi
+    if (req.isOwner) {
+      var lc = checkPptLimit(botDoc, isPro);
+      if (!lc.allowed) return limitError(res, lc);
+    }
   } catch(e) {
     return res.status(500).json({ error: 'Xato' });
   }
@@ -135,11 +138,13 @@ async function createPpt(req, res) {
       isPro, slideCount: slides.length
     });
 
-    // Counter — BARCHA foydalanuvchilar uchun
-    if (isPro) {
-      await UserBot.findByIdAndUpdate(req.botId, { $inc: { monthlyPptPro: 1 } });
-    } else {
-      await UserBot.findByIdAndUpdate(req.botId, { $inc: { monthlyPpt: 1 } });
+    // Counter — faqat bot egasi uchun
+    if (req.isOwner) {
+      if (isPro) {
+        await UserBot.findByIdAndUpdate(req.botId, { $inc: { monthlyPptPro: 1 } });
+      } else {
+        await UserBot.findByIdAndUpdate(req.botId, { $inc: { monthlyPpt: 1 } });
+      }
     }
 
     send('done', { fileName, base64, slideCount: slides.length, isPro, pptId: String(pptRec._id) });
