@@ -645,7 +645,7 @@ async function launchUserBot(botConfig) {
     var fresh = await UserBot.findById(botConfig._id);
     var plan  = fresh ? (fresh.currentPlan||'free') : 'free';
     var title = l==='uz'?'📊 Statistika':l==='en'?'📊 Statistics':'📊 Статистика';
-    var text  = title+'\n\n'+t('stats_messages',l,fresh?fresh.totalMessages:0)+'\n'+t('stats_sessions',l,sess);
+    var text  = title+'\n\n'+t('stats_messages',l,Math.floor(cnt/2))+'\n'+t('stats_sessions',l,sess); // cnt/2: har suhbat user+assistant juftidan iborat
     if (isOwn && fresh) {
       var lims = PLAN_LIMITS[plan];
       var pct  = await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});

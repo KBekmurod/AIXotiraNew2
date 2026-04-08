@@ -39,16 +39,18 @@ async function createSession(req, res) {
     var title = (req.body && req.body.title) || '';
     if (!title.trim()) return res.status(400).json({ error: 'Sarlavha kerak' });
 
-    // Limit tekshiruvi — BARCHA foydalanuvchilar uchun
-    var botDoc = await UserBot.findById(req.botId);
-    if (!botDoc) return res.status(503).json({ error: 'Bot topilmadi' });
-    await resetMonthlyIfNeeded(botDoc);
+    // Limit tekshiruvi va counter — faqat bot egasi uchun
+    if (req.isOwner) {
+      var botDoc = await UserBot.findById(req.botId);
+      if (!botDoc) return res.status(503).json({ error: 'Bot topilmadi' });
+      await resetMonthlyIfNeeded(botDoc);
 
-    var lc = checkSessionLimit(botDoc);
-    if (!lc.allowed) return limitError(res, lc);
+      var lc = checkSessionLimit(botDoc);
+      if (!lc.allowed) return limitError(res, lc);
 
-    // Counter oshirish
-    await UserBot.findByIdAndUpdate(req.botId, { $inc: { monthlySessions: 1 } });
+      // Counter oshirish
+      await UserBot.findByIdAndUpdate(req.botId, { $inc: { monthlySessions: 1 } });
+    }
 
     var now = new Date();
     var dd  = String(now.getDate()).padStart(2,'0');

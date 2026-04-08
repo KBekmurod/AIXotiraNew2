@@ -44,8 +44,11 @@ async function postChat(req, res) {
     if (!botDoc) return res.status(503).json({ error: 'Bot topilmadi' });
     await resetMonthlyIfNeeded(botDoc);
 
-    var lc = checkAILimit(botDoc);
-    if (!lc.allowed) return limitError(res, lc);
+    // AI limit faqat bot egasi uchun tekshiriladi
+    if (req.isOwner) {
+      var lc = checkAILimit(botDoc);
+      if (!lc.allowed) return limitError(res, lc);
+    }
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -92,7 +95,12 @@ async function postChat(req, res) {
       h.messages = newMsgs; h.updatedAt = new Date(); await h.save();
     }
 
-    await UserBot.findByIdAndUpdate(req.botId, { $inc: { totalMessages: 1, monthlyMessages: 1 } });
+    // Oylik hisoblagich: faqat bot egasi uchun monthlyMessages oshiriladi
+    // histMsgs da juft (user+assistant) saqlanganligi uchun totalMessages faqat 1 oshiriladi
+    var incFields = req.isOwner
+      ? { totalMessages: 1, monthlyMessages: 1 }
+      : { totalMessages: 1 };
+    await UserBot.findByIdAndUpdate(req.botId, { $inc: incFields });
     send('done', { html: isHtml });
     res.end();
   } catch (e) {
