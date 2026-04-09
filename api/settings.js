@@ -27,6 +27,8 @@ async function getBotSettings(req, res) {
       personality:       botDoc.personality || 'friendly',
       extraInstructions: req.isOwner ? (botDoc.extraInstructions || '') : undefined,
       language:          botDoc.language || 'uz',
+      accessMode:        req.isOwner ? (botDoc.accessMode || 'private') : undefined,
+      allowedUsersCount: req.isOwner ? (botDoc.allowedUsers || []).length : undefined,
       isOwner:           req.isOwner
     });
   } catch (e) {
@@ -45,13 +47,14 @@ async function updateBotSettings(req, res) {
   try {
     var body    = req.body || {};
     var update  = {};
-    var allowed = ['botName', 'personality', 'extraInstructions'];
+    var allowed = ['botName', 'personality', 'extraInstructions', 'accessMode'];
     var persVals = ['friendly', 'professional', 'funny', 'strict'];
 
     allowed.forEach(function(key) {
       if (body[key] !== undefined) {
         if (key === 'personality' && !persVals.includes(body[key])) return;
         if (key === 'botName' && !body[key].trim()) return;
+        if (key === 'accessMode' && !['private','whitelist','open'].includes(body[key])) return;
         update[key] = typeof body[key] === 'string' ? body[key].trim() : body[key];
       }
     });

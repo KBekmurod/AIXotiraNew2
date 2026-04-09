@@ -9,6 +9,9 @@ const Subscription  = require('./models/Subscription');
 const { getAIResponse, getPptAIResponse } = require('./utils/ai');
 const { generatePptx }                    = require('./utils/pptx');
 const { buildPptPrompt }                  = require('./utils/pptPrompt');
+const { analyzeImageForVideo, getPlanByMood } = require('./utils/videoAI');
+const { buildVideoFromImage, cleanupFiles }   = require('./utils/videoBuilder');
+const VideoFile = require('./models/VideoFile');
 const News = require('./models/News');
 const fs   = require('fs');
 const path = require('path');
@@ -21,10 +24,10 @@ function esc(str) {
 }
 
 const PLAN_LIMITS = {
-  free:    { ai: 30,   ppt: 2,   pptPro: 0,  sessions: 2,       personas: 0         },
-  starter: { ai: 500,  ppt: 15,  pptPro: 5,  sessions: 20,      personas: 3         },
-  pro:     { ai: 2000, ppt: 50,  pptPro: 20, sessions: 50,      personas: 10        },
-  premium: { ai: 5000, ppt: 100, pptPro: 50, sessions: Infinity, personas: Infinity }
+  free:    { ai: 30,   ppt: 2,   pptPro: 0,  sessions: 2,       personas: 0,        video: 1   },
+  starter: { ai: 500,  ppt: 15,  pptPro: 5,  sessions: 20,      personas: 3,        video: 10  },
+  pro:     { ai: 2000, ppt: 50,  pptPro: 20, sessions: 50,      personas: 10,       video: 30  },
+  premium: { ai: 5000, ppt: 100, pptPro: 50, sessions: Infinity, personas: Infinity, video: 100 }
 };
 
 const PLAN_NAMES = {
@@ -373,21 +376,31 @@ async function launchUserBot(botConfig) {
     var userId    = String(ctx.from.id);
     var firstName = esc(ctx.from.first_name || "Do'st");
     var isOwner   = userId === String(botConfig.ownerTelegramId);
+    var accessMode = botConfig.accessMode || 'private';
+    var l = lang(ctx);
 
     if (!isOwner) {
-      if (!botConfig.allowedUsers.includes(userId)) {
-        if (botConfig.allowedUsers.length >= (botConfig.maxUsers || 50)) {
-          var bl = lang(ctx);
+      if (accessMode === 'private') {
+        // Faqat egasi — boshqalar bloklanadi
+        return ctx.reply(
+          l==='uz' ? '🔒 Bu shaxsiy bot.\n\nFaqat bot egasi foydalana oladi.'
+          :l==='en' ? '🔒 This is a private bot.\n\nOnly the owner can use it.'
+          :'🔒 Это личный бот.\n\nТолько владелец может им пользоваться.'
+        );
+      } else if (accessMode === 'whitelist') {
+        // Faqat allowedUsers ro'yxatidagilar
+        if (!botConfig.allowedUsers.includes(userId)) {
           return ctx.reply(
-            bl==='uz' ? 'Bu bot hozir band. 🔒\n\n'+esc(botConfig.ownerName||'Bot egasi')+" bilan bog'laning."
-            :bl==='en' ? 'This bot is currently full. 🔒\n\nContact '+esc(botConfig.ownerName||'the owner')+'.'
-            :'Этот бот сейчас заполнен. 🔒\n\nСвяжитесь с '+esc(botConfig.ownerName||'владельцем')+'.'
+            l==='uz' ? '🔒 Bu bot yopiq.\n\n'+esc(botConfig.ownerName||'Bot egasi')+' sizga ruxsat berishi kerak.'
+            :l==='en' ? '🔒 This bot is closed.\n\nThe owner must grant you access.'
+            :'🔒 Этот бот закрыт.\n\nВладелец должен предоставить вам доступ.'
           );
         }
-        await UserBot.findByIdAndUpdate(botConfig._id,{$addToSet:{allowedUsers:userId}});
-        botConfig.allowedUsers.push(userId);
+      } else if (accessMode === 'open') {
+        // Hamma kiradi — allowedUsers ga qo'shmaymiz, har birining o'z hisobi
       }
     } else {
+      // Egasini allowedUsers ga qo'shamiz
       if (!botConfig.allowedUsers.includes(userId)) {
         await UserBot.findByIdAndUpdate(botConfig._id,{$addToSet:{allowedUsers:userId}});
         botConfig.allowedUsers.push(userId);
@@ -645,7 +658,7 @@ async function launchUserBot(botConfig) {
     var fresh = await UserBot.findById(botConfig._id);
     var plan  = fresh ? (fresh.currentPlan||'free') : 'free';
     var title = l==='uz'?'📊 Statistika':l==='en'?'📊 Statistics':'📊 Статистика';
-    var text  = title+'\n\n'+t('stats_messages',l,Math.floor(cnt/2))+'\n'+t('stats_sessions',l,sess); // cnt/2: har suhbat user+assistant juftidan iborat
+    var text  = title+'\n\n'+t('stats_messages',l,fresh?fresh.totalMessages:0)+'\n'+t('stats_sessions',l,sess);
     if (isOwn && fresh) {
       var lims = PLAN_LIMITS[plan];
       var pct  = await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
@@ -944,20 +957,68 @@ async function launchUserBot(botConfig) {
       funny:        {uz:'Quvnoq',       en:'Funny',        ru:'Весёлый'},
       strict:       {uz:'Qisqa va aniq',en:'Concise',      ru:'Краткий'}
     };
-    var persObj = persMap[botConfig.personality] || persMap.friendly;
-    var pers    = persObj[l] || persObj.ru;
+    var persObj  = persMap[botConfig.personality] || persMap.friendly;
+    var pers     = persObj[l] || persObj.ru;
     var hasPrompt = !!(botConfig.extraInstructions && botConfig.extraInstructions.trim());
+    var modeMap  = {
+      private:   { uz:'🔒 Shaxsiy (faqat men)', en:'🔒 Private (only me)',   ru:'🔒 Личный (только я)' },
+      whitelist: { uz:'👥 Whitelist',            en:'👥 Whitelist',           ru:'👥 Whitelist' },
+      open:      { uz:'🌐 Ochiq (hamma)',         en:'🌐 Open (everyone)',      ru:'🌐 Открытый (все)' }
+    };
+    var curMode  = botConfig.accessMode || 'private';
+    var modeObj  = modeMap[curMode] || modeMap.private;
+    var modeText = modeObj[l] || modeObj.ru;
     var text = l==='uz'
-      ? '🤖 Bot sozlamalari\n\n✏️ Nom: '+esc(botConfig.botName)+'\n🎭 Uslub: '+pers+'\n🧬 Prompt: '+(hasPrompt?'Bor ✅':'Yo\'q')
+      ? '🤖 Bot sozlamalari\n\n✏️ Nom: '+esc(botConfig.botName)+'\n🎭 Uslub: '+pers+'\n🧬 Prompt: '+(hasPrompt?'Bor ✅':'Yo\'q')+'\n🔐 Kirish: '+modeText
       : l==='en'
-      ? '🤖 Bot settings\n\n✏️ Name: '+esc(botConfig.botName)+'\n🎭 Style: '+pers+'\n🧬 Prompt: '+(hasPrompt?'Set ✅':'Not set')
-      : '🤖 Настройки бота\n\n✏️ Имя: '+esc(botConfig.botName)+'\n🎭 Стиль: '+pers+'\n🧬 Промпт: '+(hasPrompt?'Есть ✅':'Нет');
+      ? '🤖 Bot settings\n\n✏️ Name: '+esc(botConfig.botName)+'\n🎭 Style: '+pers+'\n🧬 Prompt: '+(hasPrompt?'Set ✅':'Not set')+'\n🔐 Access: '+modeText
+      : '🤖 Настройки бота\n\n✏️ Имя: '+esc(botConfig.botName)+'\n🎭 Стиль: '+pers+'\n🧬 Промпт: '+(hasPrompt?'Есть ✅':'Нет')+'\n🔐 Доступ: '+modeText;
     await ctx.editMessageText(text, Markup.inlineKeyboard([
       [Markup.button.callback('✏️ '+(l==='uz'?'Bot nomi':l==='en'?'Bot name':'Имя'),'edit_name'),
        Markup.button.callback('🎭 '+(l==='uz'?'Uslub':l==='en'?'Style':'Стиль'),'edit_personality')],
       [Markup.button.callback('🧬 Promptizatsiya','prz_main')],
+      [Markup.button.callback('🔐 '+(l==='uz'?'Kirish rejimi':l==='en'?'Access mode':'Режим доступа'),'sett_access_mode')],
       [Markup.button.callback('◀️ '+(l==='uz'?'Orqaga':l==='en'?'Back':'Назад'),'sett_main_back')]
     ]));
+  });
+
+  // ── Kirish rejimi tanlash ──
+  bot.action('sett_access_mode', async (ctx) => {
+    await ctx.answerCbQuery();
+    var l       = lang(ctx);
+    var curMode = botConfig.accessMode || 'private';
+    var text    = l==='uz'
+      ? '🔐 Kirish rejimi\n\nHozirgi: '+(curMode==='private'?'🔒 Shaxsiy':curMode==='whitelist'?'👥 Whitelist':'🌐 Ochiq')+'\n\n🔒 Shaxsiy — faqat siz\n👥 Whitelist — ruxsat bergan odamlar\n🌐 Ochiq — hamma, lekin limitlangan'
+      : l==='en'
+      ? '🔐 Access mode\n\nCurrent: '+(curMode==='private'?'🔒 Private':curMode==='whitelist'?'👥 Whitelist':'🌐 Open')+'\n\n🔒 Private — only you\n👥 Whitelist — users you add\n🌐 Open — everyone with limits'
+      : '🔐 Режим доступа\n\nТекущий: '+(curMode==='private'?'🔒 Личный':curMode==='whitelist'?'👥 Whitelist':'🌐 Открытый')+'\n\n🔒 Личный — только вы\n👥 Whitelist — добавленные пользователи\n🌐 Открытый — все с лимитами';
+    var mk = Markup.inlineKeyboard([
+      [Markup.button.callback((curMode==='private'?'✅ ':'')+'🔒 '+(l==='uz'?'Shaxsiy':l==='en'?'Private':'Личный'),'set_access_private')],
+      [Markup.button.callback((curMode==='whitelist'?'✅ ':'')+'👥 Whitelist','set_access_whitelist')],
+      [Markup.button.callback((curMode==='open'?'✅ ':'')+'🌐 '+(l==='uz'?'Ochiq':l==='en'?'Open':'Открытый'),'set_access_open')],
+      [Markup.button.callback('◀️ '+(l==='uz'?'Orqaga':l==='en'?'Back':'Назад'),'sett_section_bot')]
+    ]);
+    await ctx.editMessageText(text, mk);
+  });
+
+  bot.action(/^set_access_(private|whitelist|open)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    var newMode = ctx.match[1];
+    var l       = lang(ctx);
+    await UserBot.findByIdAndUpdate(botConfig._id, { $set: { accessMode: newMode } });
+    botConfig.accessMode = newMode;
+    var modeNames = {
+      private:   {uz:'🔒 Shaxsiy',   en:'🔒 Private',  ru:'🔒 Личный'},
+      whitelist: {uz:'👥 Whitelist',  en:'👥 Whitelist', ru:'👥 Whitelist'},
+      open:      {uz:'🌐 Ochiq',      en:'🌐 Open',       ru:'🌐 Открытый'}
+    };
+    var mn = (modeNames[newMode]||modeNames.private)[l] || (modeNames[newMode]||modeNames.private).ru;
+    await ctx.editMessageText(
+      l==='uz' ? '✅ Kirish rejimi o\'zgartirildi: '+mn
+      :l==='en' ? '✅ Access mode changed: '+mn
+      :'✅ Режим доступа изменён: '+mn
+    );
+    setTimeout(async()=>{try{await ctx.deleteMessage();}catch(_){}},2000);
   });
 
   // ── 2-bo'lim: Interfeys sozlamalari (hamma uchun) ──
@@ -1209,28 +1270,20 @@ async function launchUserBot(botConfig) {
 
   bot.action('ppt_start_simple', async (ctx) => {
     await ctx.answerCbQuery();
-    var uid=String(ctx.from.id);
-    var isOwn=uid===String(botConfig.ownerTelegramId);
-    if (isOwn) {
-      var fresh=await getFreshConfig();
-      var chk=await checkPptLimit(fresh,lang(ctx));
-      if (!chk.allowed) return ctx.editMessageText(chk.msg,chk.keyboard||{});
-    }
+    var fresh=await getFreshConfig();
+    var chk=await checkPptLimit(fresh,lang(ctx));
+    if (!chk.allowed) return ctx.editMessageText(chk.msg,chk.keyboard||{});
     ctx.session=ctx.session||{}; ctx.session.ppt={mode:'simple'}; ctx.session.step='ppt_topic';
     await ctx.editMessageText('📄 Oddiy prezentatsiya\n\nMavzu nima haqida?\n\n💡 Misol: Fotosintez, AI, Marketing\n\n'+t('ppt_topic_prompt',lang(ctx)));
   });
 
   bot.action('ppt_start_pro', async (ctx) => {
     await ctx.answerCbQuery();
-    var uid=String(ctx.from.id);
-    var isOwn=uid===String(botConfig.ownerTelegramId);
     var fresh=await getFreshConfig();
     var plan=fresh.currentPlan||'free';
     if (PLAN_LIMITS[plan].pptPro===0) return ctx.editMessageText(t('limit_reached_ppt_pro',lang(ctx),plan),Markup.inlineKeyboard([[Markup.button.callback(t('btn_subscribe',lang(ctx)),'sub_show_plans')]]));
-    if (isOwn) {
-      var chk=await checkPptProLimit(fresh,lang(ctx));
-      if (!chk.allowed) return ctx.editMessageText(chk.msg,chk.keyboard||{});
-    }
+    var chk=await checkPptProLimit(fresh,lang(ctx));
+    if (!chk.allowed) return ctx.editMessageText(chk.msg,chk.keyboard||{});
     ctx.session=ctx.session||{}; ctx.session.ppt={mode:'pro'}; ctx.session.step='ppt_topic';
     await ctx.editMessageText('⭐ Professional prezentatsiya\n\nRang sxemasini tanlang:',Markup.inlineKeyboard([
       [Markup.button.callback("🔵 Ko'k",'ppt_theme_blue'),Markup.button.callback("🟢 Yashil",'ppt_theme_green')],
@@ -1360,7 +1413,44 @@ async function launchUserBot(botConfig) {
   bot.action(/^ctx_use_for_wizard_/, async (ctx) => { await ctx.answerCbQuery(); await ctx.editMessageText('Tushunarli ✓  Davom eting!'); });
 
   bot.on('photo', async (ctx) => {
-    var step=ctx.session&&ctx.session.step;
+    var step = ctx.session && ctx.session.step;
+
+    // Video rejimi — rasm qabul qilish
+    if (step === 'video_wait_photo') {
+      var lv = lang(ctx);
+      var fileId   = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+      var fileLink = await ctx.telegram.getFileLink(fileId);
+      var fetch2   = require('node-fetch');
+      var tmpPath  = require('path').join(require('os').tmpdir(), 'vid_img_' + Date.now() + '.jpg');
+      var resp2    = await fetch2(fileLink.href);
+      require('fs').writeFileSync(tmpPath, await resp2.buffer());
+
+      // Caption dan prompt olish
+      var caption = (ctx.message.caption || '').trim();
+      ctx.session.videoImagePath = tmpPath;
+      ctx.session.videoPrompt    = caption;
+      ctx.session.step           = 'video_mood';
+
+      var moodBtn = function(emoji, key, uz, en, ru) {
+        return Markup.button.callback(emoji+' '+(lv==='uz'?uz:lv==='en'?en:ru), 'video_mood_'+key);
+      };
+      await ctx.reply(
+        lv==='uz' ? '📸 Rasm qabul qilindi!\n\nQanday kayfiyatda video yarataylik?'
+        :lv==='en' ? '📸 Photo received!\n\nWhat mood should the video have?'
+        :'📸 Фото получено!\n\nКакое настроение для видео?',
+        Markup.inlineKeyboard([
+          [moodBtn('✨','ai','AI tanlaydi','AI chooses','AI выберет'),
+           moodBtn('🕰','nostalgic','Nostalji','Nostalgic','Ностальгия')],
+          [moodBtn('🎭','dramatic','Dramatik','Dramatic','Драматик'),
+           moodBtn('😊','happy','Baxtli','Happy','Радость')],
+          [moodBtn('🎬','cinema','Kino uslubi','Cinematic','Кино'),
+           moodBtn('🕊','memorial','Xotira','Memorial','Памятный')],
+          [Markup.button.callback('❌ '+(lv==='uz'?'Bekor':lv==='en'?'Cancel':'Отмена'),'zone_close')]
+        ])
+      );
+      return;
+    }
+
     if (step!=='ppt_images') { var lp=lang(ctx); return ctx.reply(lp==='uz'?'Rasmni tavsiflab yozing.':lp==='en'?'Please describe the image in text.':'Опишите изображение текстом.'); }
     var ppt=ctx.session.ppt||{}; var images=ppt.images||[]; var imgMax=ppt.imgMax||4;
     if (images.length>=imgMax) return ctx.reply('Maksimal rasm soni: '+imgMax+' ta.',Markup.inlineKeyboard([[Markup.button.callback('✅ Tayyor','ppt_images_done')]]));
@@ -1748,6 +1838,103 @@ async function launchUserBot(botConfig) {
     });
   });
 
+
+  // ═══════════════════════════════════════════════
+  // /adduser va /removeuser — whitelist boshqaruvi
+  // ═══════════════════════════════════════════════
+  bot.command('adduser', async (ctx) => {
+    var uid = String(ctx.from.id);
+    if (uid !== String(botConfig.ownerTelegramId)) return ctx.reply('Bu buyruq faqat egasi uchun.');
+    var args = ctx.message.text.split(' ').slice(1);
+    var target = (args[0]||'').trim();
+    if (!target) return ctx.reply('Foydalanish: /adduser <telegram_id>\nMisol: /adduser 123456789');
+    if (botConfig.allowedUsers.includes(target)) return ctx.reply('Bu foydalanuvchi allaqachon ro\'yxatda.');
+    await UserBot.findByIdAndUpdate(botConfig._id,{$addToSet:{allowedUsers:target}});
+    botConfig.allowedUsers.push(target);
+    ctx.reply('✅ Foydalanuvchi '+target+' qo\'shildi.');
+  });
+
+  bot.command('removeuser', async (ctx) => {
+    var uid = String(ctx.from.id);
+    if (uid !== String(botConfig.ownerTelegramId)) return ctx.reply('Bu buyruq faqat egasi uchun.');
+    var args = ctx.message.text.split(' ').slice(1);
+    var target = (args[0]||'').trim();
+    if (!target) return ctx.reply('Foydalanish: /removeuser <telegram_id>\nMisol: /removeuser 123456789');
+    if (!botConfig.allowedUsers.includes(target)) return ctx.reply('Bu foydalanuvchi ro\'yxatda yo\'q.');
+    await UserBot.findByIdAndUpdate(botConfig._id,{$pull:{allowedUsers:target}});
+    botConfig.allowedUsers = botConfig.allowedUsers.filter(function(u){return u!==target;});
+    ctx.reply('✅ Foydalanuvchi '+target+' o\'chirildi.');
+  });
+
+  bot.command('users', async (ctx) => {
+    var uid = String(ctx.from.id);
+    if (uid !== String(botConfig.ownerTelegramId)) return ctx.reply('Bu buyruq faqat egasi uchun.');
+    var mode = botConfig.accessMode || 'private';
+    var modeText = {private:'🔒 Shaxsiy',whitelist:'👥 Whitelist',open:'🌐 Ochiq'}[mode]||mode;
+    var users = (botConfig.allowedUsers||[]).filter(function(u){return u!==uid;});
+    var text = '👥 Foydalanuvchilar\n\n🔐 Rejim: '+modeText+'\n📋 Ruxsatlı: '+users.length+' ta\n\n';
+    if (users.length) text += users.map(function(u,i){return (i+1)+'. '+u;}).join('\n');
+    else text += 'Hali hech kim qo\'shilmagan.';
+    text += '\n\n➕ Qo\'shish: /adduser <id>\n➖ O\'chirish: /removeuser <id>';
+    ctx.reply(text);
+  });
+
+
+  // ═══════════════════════════════════════════════
+  // 🎬 VIDEO YARATISH — Rasm → AI tahlil → Effektli video
+  // ═══════════════════════════════════════════════
+  bot.hears(['🎬 Video','🎬 Видео','🎬 Video'], async (ctx) => {
+    await notifySessionSavedIfNeeded(ctx);
+    var uid  = String(ctx.from.id);
+    var l    = lang(ctx);
+    var fresh = await getFreshConfig();
+    var plan  = fresh.currentPlan || 'free';
+    var lim   = PLAN_LIMITS[plan].video || 1;
+    var used  = fresh.monthlyVideo || 0;
+
+    if (used >= lim) {
+      return ctx.reply(
+        l==='uz' ? '🎬 Video limiti tugadi.\n\n'+PLAN_NAMES[plan]+' tarifida oyiga '+lim+' ta video. Obunani yangilang.'
+        :l==='en' ? '🎬 Video limit reached.\n\n'+PLAN_NAMES[plan]+' allows '+lim+' videos/month. Upgrade your plan.'
+        :'🎬 Лимит видео исчерпан.\n\n'+PLAN_NAMES[plan]+' — '+lim+' видео/мес. Обновите подписку.',
+        Markup.inlineKeyboard([[Markup.button.callback(t('btn_subscribe',l),'sub_show_plans')]])
+      );
+    }
+
+    ctx.session = ctx.session || {};
+    ctx.session.step = 'video_wait_photo';
+    ctx.session.videoPrompt = '';
+
+    await ctx.reply(
+      l==='uz' ? '🎬 Video yaratish\n\n📸 Rasm yuboring — AI uni tahlil qilib chiroyli video yaratadi!\n\n💡 Ixtiyoriy: Rasm bilan birga kayfiyat ham yozishingiz mumkin:\n"nostalji", "dramatik", "baxtli", "kino"'
+      :l==='en' ? '🎬 Create Video\n\n📸 Send a photo — AI will analyze it and create a beautiful video!\n\n💡 Optional: You can also write a mood with the photo:\n"nostalgic", "dramatic", "happy", "cinematic"'
+      :'🎬 Создание видео\n\n📸 Отправьте фото — AI проанализирует его и создаст красивое видео!\n\n💡 Можно также написать настроение:\n"ностальгия", "драматик", "радость", "кино"',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('❌ '+(l==='uz'?'Bekor':l==='en'?'Cancel':'Отмена'),'zone_close')]
+      ])
+    );
+  });
+
+  // Video mood tanlash (inline)
+  bot.action(/^video_mood_(nostalgic|dramatic|happy|cinema|memorial|ai)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    var mood = ctx.match[1];
+    var l    = lang(ctx);
+    var imgPath = ctx.session && ctx.session.videoImagePath;
+    if (!imgPath) return ctx.editMessageText(l==='uz'?'Rasm topilmadi. Qaytadan bosing.':l==='en'?'Image not found. Try again.':'Изображение не найдено.');
+
+    ctx.session.videoMood = mood;
+    await ctx.editMessageText(
+      l==='uz' ? '⏳ Video tayyorlanmoqda...\n\n🔍 AI rasmni tahlil qilyapti\n🎨 Effektlar tanlanmoqda\n🎬 Video yaratilmoqda\n\n(15-30 soniya)'
+      :l==='en' ? '⏳ Creating video...\n\n🔍 AI analyzing image\n🎨 Selecting effects\n🎬 Generating video\n\n(15-30 seconds)'
+      :'⏳ Создаём видео...\n\n🔍 AI анализирует фото\n🎨 Подбираем эффекты\n🎬 Генерируем видео\n\n(15-30 секунд)'
+    );
+
+    setImmediate(function() {
+      buildAndSendVideo(ctx, imgPath, mood, ctx.session.videoPrompt || '');
+    });
+  });
+
   bot.on('voice',(ctx)=>{ var l=lang(ctx); return ctx.reply(l==='uz'?"Ovozni matnga o'girib yozing!":l==='en'?'Please type instead.':'Напишите текстом.'); });
   bot.on('document',(ctx)=>{ var l=lang(ctx); return ctx.reply(l==='uz'?'Fayl mazmunini yozib yuboring.':l==='en'?'Describe the document in text.':'Опишите файл текстом.'); });
   bot.on('sticker',(ctx)=>ctx.reply('😊'));
@@ -1853,10 +2040,19 @@ async function launchUserBot(botConfig) {
         Markup.inlineKeyboard([[Markup.button.callback("🧠 Modellarimni ko'rish",'show_personas')]]) );
     }
 
-    // RUXSAT
-    var isOwn=uid===String(botConfig.ownerTelegramId);
-    if (!isOwn&&!botConfig.allowedUsers.includes(uid)) {
-      return ctx.reply("Bu bot band.\n"+esc(botConfig.ownerName||'Bot egasi')+" bilan bog'laning.");
+    // RUXSAT — accessMode bo'yicha
+    var isOwn      = uid === String(botConfig.ownerTelegramId);
+    var accessMode = botConfig.accessMode || 'private';
+
+    if (!isOwn) {
+      if (accessMode === 'private') {
+        return ctx.reply('🔒 Bu shaxsiy bot. Faqat egasi foydalana oladi.');
+      } else if (accessMode === 'whitelist') {
+        if (!botConfig.allowedUsers.includes(uid)) {
+          return ctx.reply('🔒 Ruxsat yo\'q. Bot egasi sizga ruxsat berishi kerak.');
+        }
+      }
+      // open — hamma kiradi
     }
 
     // NUDGE — sessiyasiz birinchi xabarda bir marta ko'rsatiladi
@@ -1866,11 +2062,11 @@ async function launchUserBot(botConfig) {
       // Nudge yuborildi, lekin AI javob ham davom etadi
     }
 
-        // AI LIMIT (faqat egasi)
-    if (isOwn) {
-      await getFreshConfig();
-      var aiChk=await checkAILimit(botConfig,lang(ctx));
-      if (!aiChk.allowed) return ctx.reply(aiChk.msg,aiChk.keyboard||{});
+    // AI LIMIT — barcha foydalanuvchilar uchun
+    await getFreshConfig();
+    var aiChk = await checkAILimit(botConfig, lang(ctx));
+    if (!aiChk.allowed) {
+      return ctx.reply(aiChk.msg, aiChk.keyboard || {});
     }
 
     // FIX #6: typingInterval — try/catch tashqarisida var e'lon
@@ -1967,6 +2163,76 @@ async function launchUserBot(botConfig) {
   });
 
   console.log('✅ @'+botConfig.botUsername+' boti ishga tushdi');
+
+  // ═══════════════════════════════════════════════
+  // buildAndSendVideo — video yaratib Telegram ga yuborish
+  // ═══════════════════════════════════════════════
+  async function buildAndSendVideo(ctx, imgPath, mood, userPrompt) {
+    var uid       = String(ctx.from.id);
+    var l         = lang(ctx);
+    var videoPath = null;
+    try {
+      // AI tahlil
+      var planResult;
+      if (mood === 'ai') {
+        planResult = await analyzeImageForVideo(imgPath, userPrompt || '', l);
+      } else {
+        planResult = { ok: true, plan: getPlanByMood(mood) };
+      }
+      var plan = (planResult.ok && planResult.plan) ? planResult.plan : getPlanByMood('warm');
+
+      // Matn overlay
+      if (userPrompt && !plan.text && userPrompt.length < 50) {
+        var moodWords = /nostalji|dramatik|baxtli|kino|nostalgic|dramatic|happy|cinema|memorial/i;
+        if (!moodWords.test(userPrompt)) plan.text = userPrompt;
+      }
+
+      // Video yaratish
+      var result = await buildVideoFromImage(imgPath, plan);
+      videoPath  = result.path;
+
+      // Caption
+      var styleNames = {
+        nostalgic:'Nostaljik', dramatic:'Dramatik', warm:'Iliq', cool:'Sovuq',
+        cinema:'Kino', happy:'Baxtli', memorial:'Xotira'
+      };
+      var sname = styleNames[plan.style] || plan.style;
+      var caption = '🎬 Video tayyor!\n\n🎨 Uslub: '+sname+'\n⏱ '+plan.duration+' soniya';
+      var srcNames = { gemini:'🔍 Gemini Vision', deepseek_r1:'🧠 DeepSeek R1', wisgate:'🧠 AI', groq:'🧠 AI', 'default':'💡 Standart effekt' };
+      if (planResult.source) caption += '\n' + (srcNames[planResult.source] || '🧠 AI');
+
+      await ctx.replyWithVideo({ source: videoPath }, { caption: caption });
+
+      // DB saqlash
+      try {
+        await VideoFile.create({
+          botId: botConfig._id, userTelegramId: uid,
+          style: plan.style, mood: plan.mood||mood,
+          duration: plan.duration, effects: plan.effects||[], textOverlay: plan.text||''
+        });
+      } catch(e2) { console.warn('[Video] DB:', e2.message); }
+
+      // Counter
+      await UserBot.findByIdAndUpdate(botConfig._id, { $inc: { monthlyVideo: 1 } });
+
+    } catch(e) {
+      console.error('[buildAndSendVideo]', e.message);
+      await ctx.reply(
+        l==='uz' ? '❌ Video yaratishda xato.\n\nQayta urining yoki boshqa rasm yuboring.'
+        :l==='en' ? '❌ Failed to create video. Try again or send another image.'
+        :'❌ Ошибка при создании видео. Попробуйте снова.'
+      );
+    } finally {
+      cleanupFiles([imgPath, videoPath].filter(Boolean));
+      if (ctx.session) {
+        ctx.session.step = null;
+        ctx.session.videoImagePath = null;
+        ctx.session.videoPrompt    = null;
+        ctx.session.videoMood      = null;
+      }
+    }
+  }
+
   return bot;
 }
 

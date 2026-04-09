@@ -23,20 +23,37 @@ async function authMiddleware(req, res, next) {
       return res.status(503).json({ error: 'Bot topilmadi. Super-admin botda /newbot qiling.' });
     }
 
-    var uid     = req.user.userId;
-    var isOwner = uid === String(botDoc.ownerTelegramId);
+    var uid        = req.user.userId;
+    var isOwner    = uid === String(botDoc.ownerTelegramId);
+    var accessMode = botDoc.accessMode || 'private';
 
-    // Agar owner bo'lsa — allowedUsers ga qo'shib qo'yamiz (avtomatik)
-    if (isOwner && !botDoc.allowedUsers.includes(uid)) {
+    // Egasini allowedUsers ga avtomatik qo'shamiz
+    if (isOwner && !(botDoc.allowedUsers || []).includes(uid)) {
       await UserBot.findByIdAndUpdate(botDoc._id, { $addToSet: { allowedUsers: uid } });
-      botDoc.allowedUsers.push(uid);
+      botDoc.allowedUsers = (botDoc.allowedUsers || []).concat([uid]);
     }
 
-    var isAllowed = isOwner || (botDoc.allowedUsers || []).includes(uid);
+    var isAllowed = false;
+
+    if (isOwner) {
+      // Egasi har doim kiradi
+      isAllowed = true;
+    } else if (accessMode === 'private') {
+      // Faqat egasi — boshqalar kira olmaydi
+      isAllowed = false;
+    } else if (accessMode === 'whitelist') {
+      // Faqat allowedUsers ro'yxatidagilar
+      isAllowed = (botDoc.allowedUsers || []).includes(uid);
+    } else if (accessMode === 'open') {
+      // Hamma kiradi
+      isAllowed = true;
+    }
 
     if (!isAllowed) {
-      console.warn('[Middleware] Ruxsat yo\'q. userId:', uid, '| ownerTelegramId:', botDoc.ownerTelegramId);
-      return res.status(403).json({ error: 'Ruxsat yo\'q. Avval botda /start bosing.' });
+      var mode = accessMode === 'private'
+        ? 'Bu shaxsiy bot. Faqat egasi foydalana oladi.'
+        : 'Ruxsat yo\'q. Bot egasi sizga ruxsat berishi kerak.';
+      return res.status(403).json({ error: mode, code: 'ACCESS_DENIED' });
     }
 
     req.botDoc  = botDoc;
