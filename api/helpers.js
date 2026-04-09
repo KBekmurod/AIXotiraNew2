@@ -7,10 +7,10 @@ const Subscription = require('../models/Subscription');
 // PLAN KONSTANTLARI — bir joyda
 // ─────────────────────────────────────────
 const PLAN_LIMITS = {
-  free:    { ai: 30,   ppt: 2,   pptPro: 0,  sessions: 2,        personas: 0         },
-  starter: { ai: 500,  ppt: 15,  pptPro: 5,  sessions: 20,       personas: 3         },
-  pro:     { ai: 2000, ppt: 50,  pptPro: 20, sessions: 50,       personas: 10        },
-  premium: { ai: 5000, ppt: 100, pptPro: 50, sessions: Infinity, personas: Infinity  }
+  free:    { ai: 30,   ppt: 2,   pptPro: 0,  sessions: 2,        personas: 0,        video: 1   },
+  starter: { ai: 500,  ppt: 15,  pptPro: 5,  sessions: 20,       personas: 3,        video: 10  },
+  pro:     { ai: 2000, ppt: 50,  pptPro: 20, sessions: 50,       personas: 10,       video: 30  },
+  premium: { ai: 5000, ppt: 100, pptPro: 50, sessions: Infinity, personas: Infinity, video: 100 }
 };
 
 const PLAN_NAMES = {
@@ -26,9 +26,7 @@ const PLAN_PRICES = {
 // ─────────────────────────────────────────
 // OYLIK RESET — har API so'rovda tekshiriladi
 // ─────────────────────────────────────────
-function monthStr() {
-  return new Date().toISOString().slice(0, 7); // "2026-04"
-}
+
 
 async function resetMonthlyIfNeeded(botDoc) {
   var current = monthStr();
@@ -39,6 +37,7 @@ async function resetMonthlyIfNeeded(botDoc) {
         monthlyPpt:       0,
         monthlyPptPro:    0,
         monthlySessions:  0,
+        monthlyVideo:     0,
         monthlyReset:     current
       }
     });
@@ -46,6 +45,7 @@ async function resetMonthlyIfNeeded(botDoc) {
     botDoc.monthlyPpt       = 0;
     botDoc.monthlyPptPro    = 0;
     botDoc.monthlySessions  = 0;
+    botDoc.monthlyVideo     = 0;
     botDoc.monthlyReset     = current;
   }
   return botDoc;
@@ -208,6 +208,63 @@ async function generateUniqueId(plan) {
 }
 
 // ─────────────────────────────────────────
+// OPEN REJIM — alohida foydalanuvchi limiti
+// ─────────────────────────────────────────
+function monthStr() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+// open rejimda foydalanuvchining oylik hisobini olish yoki yaratish
+function getUserUsage(botDoc, uid) {
+  var usage = botDoc.userUsage ? botDoc.userUsage.get(uid) : null;
+  var cur   = monthStr();
+  if (!usage || usage.reset !== cur) {
+    return { ai: 0, ppt: 0, pptPro: 0, sessions: 0, reset: cur };
+  }
+  return usage;
+}
+
+async function saveUserUsage(botDoc, uid, usage) {
+  var UserBot = require('../models/UserBot');
+  var key = 'userUsage.' + uid;
+  var upd = {};
+  upd[key] = usage;
+  await UserBot.findByIdAndUpdate(botDoc._id, { $set: upd });
+}
+
+// open rejim limit tekshiruvi
+function checkUserLimit(botDoc, uid, type) {
+  var plan  = botDoc.currentPlan || 'free';
+  var lims  = PLAN_LIMITS[plan] || PLAN_LIMITS.free;
+  var usage = getUserUsage(botDoc, uid);
+
+  var used  = usage[type] || 0;
+  var limit = lims[type];
+
+  if (limit === 0) {
+    return {
+      allowed:  false,
+      code:     'PLAN_' + type.toUpperCase(),
+      plan:     plan,
+      planName: PLAN_NAMES[plan],
+      message:  PLAN_NAMES[plan] + ' tarifida bu funksiya mavjud emas.'
+    };
+  }
+  if (limit !== Infinity && used >= limit) {
+    return {
+      allowed:  false,
+      code:     'LIMIT_' + type.toUpperCase(),
+      plan:     plan,
+      planName: PLAN_NAMES[plan],
+      used:     used,
+      limit:    limit,
+      message:  PLAN_NAMES[plan] + ' tarifida oylik ' + limit + ' ta limit tugadi.'
+    };
+  }
+  return { allowed: true, usage: usage };
+}
+
+// ─────────────────────────────────────────
 // XABAR UZUNLIGI TEKSHIRUVI
 // ─────────────────────────────────────────
 var MAX_MSG_LENGTH = 4000; // belgi
@@ -231,5 +288,8 @@ module.exports = {
   limitError,
   limitErrorSSE,
   generateUniqueId,
-  validateMessage
+  validateMessage,
+  getUserUsage,
+  saveUserUsage,
+  checkUserLimit
 };

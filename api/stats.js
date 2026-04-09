@@ -52,22 +52,21 @@ async function getStats(req, res) {
         ppts:     pptCount,
         personas: perCount
       },
-      // Oylik hisoblagichlar va limitlar faqat bot egasiga ko'rsatiladi
-      monthly: req.isOwner ? {
+      monthly: {
         ai:       botDoc.monthlyMessages  || 0,
         ppt:      botDoc.monthlyPpt       || 0,
         pptPro:   botDoc.monthlyPptPro    || 0,
         sessions: botDoc.monthlySessions  || 0
-      } : null,
-      limits: req.isOwner ? {
+      },
+      limits: {
         ai:       lims.ai,
         ppt:      lims.ppt,
         pptPro:   lims.pptPro,
         sessions: lims.sessions === Infinity ? null : lims.sessions,
         personas: lims.personas === Infinity ? null : lims.personas
-      } : null,
+      },
       subscription:  subInfo,
-      totalMessages: req.isOwner ? (botDoc.totalMessages || 0) : null
+      totalMessages: botDoc.totalMessages || 0
     });
   } catch (e) {
     console.error('[API/stats]', e.message);
