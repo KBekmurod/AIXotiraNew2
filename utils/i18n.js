@@ -562,8 +562,7 @@ const T = {
     uz: '🤖 Bot sozlamalari',
     ru: '🤖 Настройки бота',
     en: '🤖 Bot settings'
-  },
-
+  }
 };
 
 // ── ASOSIY FUNKSIYA ──
@@ -591,8 +590,7 @@ function mainKeyboard(lang, isOwner, hasPrompt) {
       [t('btn_sessions', l),  t('btn_settings', l)],
       [t('btn_prompt', l),    t('btn_ppt', l)],
       [t('btn_news', l),      t('btn_subscribe', l)],
-      [t('btn_files', l),     t('btn_clear', l)],
-      
+      [t('btn_files', l),     t('btn_clear', l)]
     ]).resize();
   }
 
@@ -607,12 +605,12 @@ function mainKeyboard(lang, isOwner, hasPrompt) {
     ]).resize();
   }
 
-  // Boshqa foydalanuvchilar
+  // Boshqa foydalanuvchilar — Sozlamalar yo'q, Obuna yo'q
   return Markup.keyboard([
     [t('btn_chat', l),     t('btn_stats', l)],
     [t('btn_sessions', l), t('btn_ppt', l)],
     [t('btn_files', l),    t('btn_news', l)],
-    [t('btn_clear', l)],
+    [t('btn_clear', l)]
   ]).resize();
 }
 

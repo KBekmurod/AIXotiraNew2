@@ -12,6 +12,9 @@ const subscriptionSchema = new mongoose.Schema({
   firstName:      { type: String, default: '' },
   username:       { type: String, default: '' },
 
+  // ── QAYSI BOT UCHUN ──
+  botId:          { type: mongoose.Schema.Types.ObjectId, ref: 'UserBot', default: null },
+
   // ── TARIF ──
   // 'starter' | 'pro' | 'premium'
   plan:           { type: String, enum: ['starter','pro','premium'], required: true },

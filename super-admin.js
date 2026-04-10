@@ -2,10 +2,9 @@
 
 const { Telegraf, session, Markup } = require('telegraf');
 const UserBot      = require('./models/UserBot');
+const UserProfile  = require('./models/UserProfile');
 const ChatHistory  = require('./models/ChatHistory');
-const Subscription       = require('./models/Subscription');
-const GroupConfig        = require('./models/GroupConfig');
-const GroupSubscription  = require('./models/GroupSubscription');
+const Subscription = require('./models/Subscription');
 const News         = require('./models/News');
 const Broadcast    = require('./models/Broadcast');
 const { launchUserBot } = require('./individual-bot');
@@ -111,13 +110,23 @@ async function activateByUniqueId(ctx, uniqueId) {
     sub.notified1d  = false;
     await sub.save();
 
-    // DB yangilash
-    await UserBot.findOneAndUpdate(
-      { ownerTelegramId: String(sub.telegramId), isActive: true },
-      { $set: { currentPlan: sub.plan } }
-    );
+    // DB yangilash — UserProfile (har user uchun alohida plan)
+    var botIdForSub = sub.botId || null;
+    if (botIdForSub) {
+      await UserProfile.findOneAndUpdate(
+        { botId: botIdForSub, userTelegramId: String(sub.telegramId) },
+        { $set: { currentPlan: sub.plan } },
+        { upsert: true }
+      );
+    } else {
+      // Backward compat — eski yozuvlar uchun
+      await UserBot.findOneAndUpdate(
+        { ownerTelegramId: String(sub.telegramId), isActive: true },
+        { $set: { currentPlan: sub.plan } }
+      );
+    }
 
-    // RAM yangilash — activeBots dan bot.botConfig orqali
+    // RAM yangilash — activeBots dan bot.botConfig orqali (owner uchun)
     for (var [, runningBot] of activeBots) {
       if (runningBot.botConfig &&
           String(runningBot.botConfig.ownerTelegramId) === String(sub.telegramId)) {
@@ -177,32 +186,6 @@ adminBot.action(/^adm_activate_(.+)$/, async function(ctx) {
 // ═══════════════════════════════════════════════
 // ⭐ OBUNALAR
 // ═══════════════════════════════════════════════
-// Guruh obunani tasdiqlash
-adminBot.command('gactivate', async function(ctx) {
-  if (String(ctx.from.id) !== String(process.env.SUPER_ADMIN_ID)) return;
-  var args     = ctx.message.text.split(' ').slice(1);
-  var uniqueId = (args[0] || '').trim();
-  if (!uniqueId) return ctx.reply('Foydalanish: /gactivate <uniqueId>');
-
-  var sub = await GroupSubscription.findOne({ uniqueId });
-  if (!sub) return ctx.reply('Buyurtma topilmadi: ' + uniqueId);
-  if (sub.status === 'active') return ctx.reply('Bu obuna allaqachon faol!');
-
-  var now    = new Date();
-  var expiry = new Date(now);
-  expiry.setMonth(expiry.getMonth() + (sub.durationMonths || 1));
-
-  await GroupSubscription.findByIdAndUpdate(sub._id, {
-    $set: { status: 'active', activatedAt: now, expiresAt: expiry }
-  });
-  await GroupConfig.findOneAndUpdate(
-    { chatId: sub.chatId },
-    { $set: { currentPlan: sub.plan } }
-  );
-
-  ctx.reply('✅ Guruh obuna faollashtirildi!\nGuruh: ' + sub.chatTitle + '\nTarif: ' + sub.plan + '\nMuddati: ' + expiry.toLocaleDateString('ru-RU'));
-});
-
 adminBot.hears('⭐ Obunalar', async function(ctx) {
   ctx.session = {};
   await showSubsMenu(ctx, false);

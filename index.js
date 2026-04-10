@@ -52,7 +52,6 @@ async function main() {
       currentPlan:     'free',
       allowedUsers:    [],
       maxUsers:        50,
-      accessMode:      'private',
       language:        'uz',
       personality:     'friendly',
       topics:          [],
@@ -86,10 +85,6 @@ async function main() {
 
   // 5. Scheduler
   scheduler.start();
-
-  // 6. Express server (Mini App + API)
-  var server = require('./server');
-  server.start();
 
   console.log('\n✅ Tizim to\'liq ishga tushdi!\n');
 }

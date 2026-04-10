@@ -9,44 +9,27 @@ const Subscription  = require('./models/Subscription');
 const { getAIResponse, getPptAIResponse } = require('./utils/ai');
 const { generatePptx }                    = require('./utils/pptx');
 const { buildPptPrompt }                  = require('./utils/pptPrompt');
-const GroupConfig       = require('./models/GroupConfig');
-const GroupSubscription = require('./models/GroupSubscription');
-
 const News = require('./models/News');
 const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
 const { t, mainKeyboard, detectLang } = require('./utils/i18n');
-const PptFile = require('./models/PptFile');
+const PptFile       = require('./models/PptFile');
+const UserProfile   = require('./models/UserProfile');
 
 function esc(str) {
   return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 const PLAN_LIMITS = {
-  free:    { ai: 30,   ppt: 2,   pptPro: 0,  sessions: 2,       personas: 0        },
-  starter: { ai: 500,  ppt: 15,  pptPro: 5,  sessions: 20,      personas: 3        },
-  pro:     { ai: 2000, ppt: 50,  pptPro: 20, sessions: 50,      personas: 10       },
+  free:    { ai: 30,   ppt: 2,   pptPro: 0,  sessions: 2,       personas: 0         },
+  starter: { ai: 500,  ppt: 15,  pptPro: 5,  sessions: 20,      personas: 3         },
+  pro:     { ai: 2000, ppt: 50,  pptPro: 20, sessions: 50,      personas: 10        },
   premium: { ai: 5000, ppt: 100, pptPro: 50, sessions: Infinity, personas: Infinity }
 };
 
 const PLAN_NAMES = {
   free: '📦 Free', starter: '⭐ Starter', pro: '🚀 Pro', premium: '💎 Premium'
-};
-
-// Guruh uchun limitlar — faqat xabar soni farqlanadi
-// PPT va Video barcha planlarda mavjud
-const GROUP_PLAN_LIMITS = {
-  free:    { ai: 100       },
-  starter: { ai: 1000      },
-  pro:     { ai: 5000      },
-  premium: { ai: Infinity  }
-};
-
-const GROUP_PLAN_PRICES = {
-  starter: { discounted: '19 000', original: '29 000' },
-  pro:     { discounted: '39 000', original: '59 000' },
-  premium: { discounted: '59 000', original: '99 000' }
 };
 
 const PLAN_PRICES = {
@@ -67,11 +50,11 @@ const BUILTIN_PERSONAS = [
 
 const MENU_ITEMS_ALL = [
   '💬 Suhbat','📊 Statistika','🗂 Suhbatlar','⚙️ Sozlamalar',
-  '🎭 Promptizatsiya','🎨 Prezentatsiya','📰 Yangiliklar','🗑 Tozalash','⭐ Obuna','📁 Fayllarim','🌐 Web interfeys',
+  '🎭 Promptizatsiya','🎨 Prezentatsiya','📰 Yangiliklar','🗑 Tozalash','⭐ Obuna','📁 Fayllarim',
   '💬 Чат','📊 Статистика','🗂 Беседы','⚙️ Настройки',
-  '🎭 Промпты','🎨 Презентация','📰 Новости','🗑 Очистить','⭐ Подписка','📁 Мои файлы','🌐 Веб-интерфейс',
+  '🎭 Промпты','🎨 Презентация','📰 Новости','🗑 Очистить','⭐ Подписка','📁 Мои файлы',
   '💬 Chat','📊 Statistics','🗂 Sessions','⚙️ Settings',
-  '🎭 Prompts','🎨 Presentation','📰 News','🗑 Clear','⭐ Subscribe','📁 My Files','🌐 Web App'
+  '🎭 Prompts','🎨 Presentation','📰 News','🗑 Clear','⭐ Subscribe','📁 My Files'
 ];
 
 async function launchUserBot(botConfig) {
@@ -267,19 +250,7 @@ async function launchUserBot(botConfig) {
   // ── OYLIK RESET ──
   function monthStr() { return new Date().toISOString().slice(0, 7); }
 
-  async function resetMonthlyIfNeeded(cfg) {
-    var current = monthStr();
-    if (cfg.monthlyReset !== current) {
-      await UserBot.findByIdAndUpdate(cfg._id, {
-        $set: { monthlyMessages:0, monthlyPpt:0, monthlyPptPro:0, monthlySessions:0, monthlyReset:current }
-      });
-      cfg.monthlyMessages = 0; cfg.monthlyPpt = 0;
-      cfg.monthlyPptPro   = 0; cfg.monthlySessions = 0;
-      cfg.monthlyReset    = current;
-    }
-  }
-
-  // ── FRESH CONFIG — DB dan yangi qiymatlar olish ──
+  // ── FRESH CONFIG — DB dan yangi qiymatlar olish (faqat bot sozlamalari) ──
   async function getFreshConfig() {
     var fresh = await UserBot.findById(botConfig._id);
     if (fresh) {
@@ -293,58 +264,82 @@ async function launchUserBot(botConfig) {
     return botConfig;
   }
 
-  // ── LIMIT TEKSHIRUVLARI ──
-  // FIX #1: typeof t() olib tashlandi — t() har doim string qaytaradi
+  // ── USER PROFILE — har bir foydalanuvchi uchun alohida plan/limit ──
+  async function getUserProfile(uid) {
+    var profile = await UserProfile.findOne({ botId: botConfig._id, userTelegramId: String(uid) });
+    if (!profile) {
+      profile = await UserProfile.create({
+        botId: botConfig._id,
+        userTelegramId: String(uid),
+        currentPlan: 'free'
+      });
+    }
+    return profile;
+  }
 
-  async function checkAILimit(cfg, l) {
-    await resetMonthlyIfNeeded(cfg);
-    var plan = cfg.currentPlan || 'free';
+  // ── USER PROFILE RESET — oylik limitni yangilash ──
+  async function resetUserMonthlyIfNeeded(profile) {
+    var current = monthStr();
+    if (profile.monthlyReset !== current) {
+      await UserProfile.findByIdAndUpdate(profile._id, {
+        $set: { monthlyMessages:0, monthlyPpt:0, monthlyPptPro:0, monthlySessions:0, monthlyReset:current }
+      });
+      profile.monthlyMessages = 0; profile.monthlyPpt = 0;
+      profile.monthlyPptPro   = 0; profile.monthlySessions = 0;
+      profile.monthlyReset    = current;
+    }
+    return profile;
+  }
+
+  // ── LIMIT TEKSHIRUVLARI — har user uchun o'z profili orqali ──
+
+  async function checkAILimit(profile, l) {
+    await resetUserMonthlyIfNeeded(profile);
+    var plan = profile.currentPlan || 'free';
     var lim  = PLAN_LIMITS[plan].ai;
-    if ((cfg.monthlyMessages || 0) >= lim) {
+    if ((profile.monthlyMessages || 0) >= lim) {
       return { allowed:false, msg:t('limit_reached_ai',l,PLAN_NAMES[plan],lim),
         keyboard:Markup.inlineKeyboard([[Markup.button.callback(t('btn_subscribe',l),'sub_show_plans')]]) };
     }
     return { allowed:true };
   }
 
-  async function checkPptLimit(cfg, l) {
-    await resetMonthlyIfNeeded(cfg);
-    var plan = cfg.currentPlan || 'free';
+  async function checkPptLimit(profile, l) {
+    await resetUserMonthlyIfNeeded(profile);
+    var plan = profile.currentPlan || 'free';
     var lim  = PLAN_LIMITS[plan].ppt;
-    if ((cfg.monthlyPpt || 0) >= lim) {
+    if ((profile.monthlyPpt || 0) >= lim) {
       return { allowed:false, msg:t('limit_reached_ppt',l,PLAN_NAMES[plan],lim),
         keyboard:Markup.inlineKeyboard([[Markup.button.callback(t('btn_subscribe',l),'sub_show_plans')]]) };
     }
     return { allowed:true };
   }
 
-  async function checkPptProLimit(cfg, l) {
-    await resetMonthlyIfNeeded(cfg);
-    var plan = cfg.currentPlan || 'free';
+  async function checkPptProLimit(profile, l) {
+    await resetUserMonthlyIfNeeded(profile);
+    var plan = profile.currentPlan || 'free';
     var lim  = PLAN_LIMITS[plan].pptPro;
-    // FIX #1: to'g'ridan-to'g'ri t() chaqiriladi
-    if (lim === 0 || (cfg.monthlyPptPro || 0) >= lim) {
+    if (lim === 0 || (profile.monthlyPptPro || 0) >= lim) {
       return { allowed:false, msg:t('limit_reached_ppt_pro',l,plan),
         keyboard:Markup.inlineKeyboard([[Markup.button.callback(t('btn_subscribe',l),'sub_show_plans')]]) };
     }
     return { allowed:true };
   }
 
-  async function checkSessionLimit(cfg, l) {
-    await resetMonthlyIfNeeded(cfg);
-    var plan = cfg.currentPlan || 'free';
+  async function checkSessionLimit(profile, l) {
+    await resetUserMonthlyIfNeeded(profile);
+    var plan = profile.currentPlan || 'free';
     var lim  = PLAN_LIMITS[plan].sessions;
-    if (lim !== Infinity && (cfg.monthlySessions || 0) >= lim) {
+    if (lim !== Infinity && (profile.monthlySessions || 0) >= lim) {
       return { allowed:false, msg:t('limit_reached_session',l,PLAN_NAMES[plan],lim),
         keyboard:Markup.inlineKeyboard([[Markup.button.callback(t('btn_subscribe',l),'sub_show_plans')]]) };
     }
     return { allowed:true };
   }
 
-  async function checkPersonaLimit(cfg, count, l) {
-    var plan = cfg.currentPlan || 'free';
+  async function checkPersonaLimit(profile, count, l) {
+    var plan = profile.currentPlan || 'free';
     var lim  = PLAN_LIMITS[plan].personas;
-    // FIX #1: to'g'ridan-to'g'ri t() chaqiriladi
     if (lim === 0 || (lim !== Infinity && count >= lim)) {
       return { allowed:false, msg:t('limit_reached_persona',l,plan,lim),
         keyboard:Markup.inlineKeyboard([[Markup.button.callback(t('btn_subscribe',l),'sub_show_plans')]]) };
@@ -391,31 +386,21 @@ async function launchUserBot(botConfig) {
     var userId    = String(ctx.from.id);
     var firstName = esc(ctx.from.first_name || "Do'st");
     var isOwner   = userId === String(botConfig.ownerTelegramId);
-    var accessMode = botConfig.accessMode || 'private';
-    var l = lang(ctx);
 
     if (!isOwner) {
-      if (accessMode === 'private') {
-        // Faqat egasi — boshqalar bloklanadi
-        return ctx.reply(
-          l==='uz' ? '🔒 Bu shaxsiy bot.\n\nFaqat bot egasi foydalana oladi.'
-          :l==='en' ? '🔒 This is a private bot.\n\nOnly the owner can use it.'
-          :'🔒 Это личный бот.\n\nТолько владелец может им пользоваться.'
-        );
-      } else if (accessMode === 'whitelist') {
-        // Faqat allowedUsers ro'yxatidagilar
-        if (!botConfig.allowedUsers.includes(userId)) {
+      if (!botConfig.allowedUsers.includes(userId)) {
+        if (botConfig.allowedUsers.length >= (botConfig.maxUsers || 50)) {
+          var bl = lang(ctx);
           return ctx.reply(
-            l==='uz' ? '🔒 Bu bot yopiq.\n\n'+esc(botConfig.ownerName||'Bot egasi')+' sizga ruxsat berishi kerak.'
-            :l==='en' ? '🔒 This bot is closed.\n\nThe owner must grant you access.'
-            :'🔒 Этот бот закрыт.\n\nВладелец должен предоставить вам доступ.'
+            bl==='uz' ? 'Bu bot hozir band. 🔒\n\n'+esc(botConfig.ownerName||'Bot egasi')+" bilan bog'laning."
+            :bl==='en' ? 'This bot is currently full. 🔒\n\nContact '+esc(botConfig.ownerName||'the owner')+'.'
+            :'Этот бот сейчас заполнен. 🔒\n\nСвяжитесь с '+esc(botConfig.ownerName||'владельцем')+'.'
           );
         }
-      } else if (accessMode === 'open') {
-        // Hamma kiradi — allowedUsers ga qo'shmaymiz, har birining o'z hisobi
+        await UserBot.findByIdAndUpdate(botConfig._id,{$addToSet:{allowedUsers:userId}});
+        botConfig.allowedUsers.push(userId);
       }
     } else {
-      // Egasini allowedUsers ga qo'shamiz
       if (!botConfig.allowedUsers.includes(userId)) {
         await UserBot.findByIdAndUpdate(botConfig._id,{$addToSet:{allowedUsers:userId}});
         botConfig.allowedUsers.push(userId);
@@ -524,13 +509,12 @@ async function launchUserBot(botConfig) {
     var isOwn = uid === String(botConfig.ownerTelegramId);
     var l     = lang(ctx);
 
-    if (isOwn) {
-      await getFreshConfig();
-      var chk = await checkSessionLimit(botConfig, l);
-      if (!chk.allowed) return ctx.editMessageText(chk.msg, chk.keyboard||{});
-      await UserBot.findByIdAndUpdate(botConfig._id, {$inc:{monthlySessions:1}});
-      botConfig.monthlySessions = (botConfig.monthlySessions||0)+1;
-    }
+    // Har user uchun limit tekshiruvi
+    var profile = await getUserProfile(uid);
+    var chk = await checkSessionLimit(profile, l);
+    if (!chk.allowed) return ctx.editMessageText(chk.msg, chk.keyboard||{});
+    await UserProfile.findByIdAndUpdate(profile._id, {$inc:{monthlySessions:1}});
+    profile.monthlySessions = (profile.monthlySessions||0)+1;
 
     var now  = new Date();
     var dd   = String(now.getDate()).padStart(2,'0');
@@ -670,23 +654,34 @@ async function launchUserBot(botConfig) {
         Markup.inlineKeyboard([[Markup.button.callback(t('btn_close',l),'zone_close')]])
       );
     }
-    var fresh = await UserBot.findById(botConfig._id);
-    var plan  = fresh ? (fresh.currentPlan||'free') : 'free';
+    // Har user o'z profilidagi plan/limitlarni ko'radi
+    var profile = await getUserProfile(uid);
+    var plan    = profile.currentPlan || 'free';
+    var lims    = PLAN_LIMITS[plan];
+    var pct     = await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
+
     var title = l==='uz'?'📊 Statistika':l==='en'?'📊 Statistics':'📊 Статистика';
-    var text  = title+'\n\n'+t('stats_messages',l,fresh?fresh.totalMessages:0)+'\n'+t('stats_sessions',l,sess);
-    if (isOwn && fresh) {
-      var lims = PLAN_LIMITS[plan];
-      var pct  = await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
-      text += '\n\n'+t('stats_plan',l,PLAN_NAMES[plan]);
-      var sub = await Subscription.findOne({telegramId:uid,status:{$in:['active','grace']}});
-      if (sub && sub.expiresAt) {
-        var dl = Math.ceil((sub.expiresAt-new Date())/(1000*60*60*24));
-        if (dl>0) text += '\n'+t('stats_expires',l,sub.expiresAt.toLocaleDateString('ru-RU'));
+    var text  = title+'\n\n'+t('stats_messages',l,profile.totalMessages||0)+'\n'+t('stats_sessions',l,sess);
+    text += '\n\n'+t('stats_plan',l,PLAN_NAMES[plan]);
+
+    var sub = await Subscription.findOne({telegramId:uid,botId:botConfig._id,status:{$in:['active','grace']}});
+    if (sub && sub.expiresAt) {
+      var dl = Math.ceil((sub.expiresAt-new Date())/(1000*60*60*24));
+      if (dl>0) text += '\n'+t('stats_expires',l,sub.expiresAt.toLocaleDateString('ru-RU'));
+    }
+    var perMax = lims.personas===Infinity?'∞':lims.personas;
+    text += '\n\n'+t('stats_monthly_ai',l,profile.monthlyMessages||0,lims.ai)+'\n'+
+      t('stats_monthly_ppt',l,profile.monthlyPpt||0,lims.ppt===Infinity?'∞':lims.ppt)+'\n'+
+      (l==='uz'?'🎭 Personalar: ':l==='en'?'🎭 Personas: ':'🎭 Персон: ')+pct+'/'+perMax;
+
+    // Egasi uchun bot umumiy statistikasi ham ko'rinadi
+    if (isOwn) {
+      var freshBot = await UserBot.findById(botConfig._id);
+      if (freshBot) {
+        text += '\n\n'+(l==='uz'?'━━━ Bot umumiy ━━━':l==='en'?'━━━ Bot total ━━━':'━━━ Бот итого ━━━');
+        text += '\n'+(l==='uz'?'👥 Foydalanuvchilar: ':l==='en'?'👥 Users: ':'👥 Пользователи: ')+(freshBot.allowedUsers||[]).length+' ta';
+        text += '\n'+(l==='uz'?'💬 Jami xabarlar: ':l==='en'?'💬 Total messages: ':'💬 Всего сообщений: ')+(freshBot.totalMessages||0);
       }
-      var perMax = lims.personas===Infinity?'∞':lims.personas;
-      text += '\n\n'+t('stats_monthly_ai',l,fresh.monthlyMessages||0,lims.ai)+'\n'+
-        t('stats_monthly_ppt',l,fresh.monthlyPpt||0,lims.ppt===Infinity?'∞':lims.ppt)+'\n'+
-        (l==='uz'?'🎭 Personalar: ':l==='en'?'🎭 Personas: ':'🎭 Персон: ')+pct+'/'+perMax;
     }
     await openZone(ctx,text,Markup.inlineKeyboard([[Markup.button.callback(t('btn_close',l),'zone_close')]]));
   });
@@ -929,159 +924,85 @@ async function launchUserBot(botConfig) {
   // ═══════════════════════════════════════════════
   // ⚙️ SOZLAMALAR — FIX #4: barcha foydalanuvchilar ko'ra oladi
   // ═══════════════════════════════════════════════
-  // ── Sozlamalar asosiy menyu — 2 bo'lim ──
-  async function showSettingsMain(ctx, edit) {
-    var uid   = String(ctx.from.id);
-    var isOwn = uid === String(botConfig.ownerTelegramId);
-    var l     = lang(ctx);
-    var title = l==='uz'
-      ? '⚙️ Sozlamalar\n\nQuyidagi bo\'limlardan birini tanlang:'
-      : l==='en'
-      ? '⚙️ Settings\n\nChoose a section:'
-      : '⚙️ Настройки\n\nВыберите раздел:';
-    var btns = [];
-    if (isOwn) {
-      btns.push([Markup.button.callback(
-        l==='uz'?'🤖 Bot sozlamalari':l==='en'?'🤖 Bot settings':'🤖 Настройки бота',
-        'sett_section_bot'
-      )]);
-    }
-    btns.push(
-      [Markup.button.callback(
-        l==='uz'?'👤 Interfeys sozlamalari':l==='en'?'👤 Interface settings':'👤 Настройки интерфейса',
-        'sett_section_interface'
-      )],
-      [Markup.button.callback(t('btn_close',l),'zone_close')]
-    );
-    if (edit) await ctx.editMessageText(title, Markup.inlineKeyboard(btns));
-    else      await openZone(ctx, title, Markup.inlineKeyboard(btns));
-  }
-
   bot.hears(['⚙️ Sozlamalar','⚙️ Настройки','⚙️ Settings'], async (ctx) => {
     await notifySessionSavedIfNeeded(ctx);
-    await showSettingsMain(ctx, false);
+    var uid  = String(ctx.from.id);
+    var isOwn = uid === String(botConfig.ownerTelegramId);
+    var l    = lang(ctx);
+    var profile = await getUserProfile(uid);
+    var plan    = profile.currentPlan || 'free';
+    var maxP    = PLAN_LIMITS[plan].personas;
+    var cnt     = await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
+    var settTitle = l==='uz'
+      ? '⚙️ Sozlamalar\n\nMening modellarim: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n\nModel — bu AI ning suhbat uslubi.'
+      : l==='en'
+      ? '⚙️ Settings\n\nMy personas: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n\nA persona is an AI conversation style.'
+      : '⚙️ Настройки\n\nМои персоны: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n\nПерсона — стиль общения AI.';
+    var settBtns = [];
+    // Egasi uchun bot sozlamalari ham ko'rinadi
+    if (isOwn) {
+      settBtns.push([Markup.button.callback(t('btn_bot_settings',l),'sett_bot_config')]);
+    }
+    settBtns.push(
+      [Markup.button.callback(l==='uz'?"🧠 Modellarni ko'rish":l==='en'?'🧠 View personas':'🧠 Просмотр персон','show_personas')],
+      [Markup.button.callback(l==='uz'?'➕ Yangi model yaratish':l==='en'?'➕ Create new persona':'➕ Создать персону','create_persona')],
+      [Markup.button.callback(l==='uz'?'📋 Tayyor modellar':l==='en'?'📋 Ready personas':'📋 Готовые персоны','builtin_personas')],
+      [Markup.button.callback(t('btn_change_lang',l),'change_interface_lang')],
+      [Markup.button.callback(t('btn_close',l),'zone_close')]
+    );
+    await openZone(ctx,settTitle,Markup.inlineKeyboard(settBtns));
   });
 
-  // ── 1-bo'lim: Bot sozlamalari (faqat egasi) ──
-  bot.action('sett_section_bot', async (ctx) => {
+
+  // Bot sozlamalari — Sozlamalar bo'limidan
+  bot.action('sett_bot_config', async (ctx) => {
     await ctx.answerCbQuery();
     var l = lang(ctx);
     var persMap = {
-      friendly:     {uz:'Samimiy',      en:'Friendly',    ru:'Дружелюбный'},
+      friendly:     {uz:'Samimiy',     en:'Friendly',    ru:'Дружелюбный'},
       professional: {uz:'Professional', en:'Professional', ru:'Профессиональный'},
-      funny:        {uz:'Quvnoq',       en:'Funny',        ru:'Весёлый'},
-      strict:       {uz:'Qisqa va aniq',en:'Concise',      ru:'Краткий'}
+      funny:        {uz:'Quvnoq',      en:'Funny',       ru:'Весёлый'},
+      strict:       {uz:'Qisqa va aniq',en:'Concise',    ru:'Краткий'}
     };
-    var persObj  = persMap[botConfig.personality] || persMap.friendly;
-    var pers     = persObj[l] || persObj.ru;
-    var hasPrompt = !!(botConfig.extraInstructions && botConfig.extraInstructions.trim());
-    var modeMap  = {
-      private:   { uz:'🔒 Shaxsiy (faqat men)', en:'🔒 Private (only me)',   ru:'🔒 Личный (только я)' },
-      whitelist: { uz:'👥 Whitelist',            en:'👥 Whitelist',           ru:'👥 Whitelist' },
-      open:      { uz:'🌐 Ochiq (hamma)',         en:'🌐 Open (everyone)',      ru:'🌐 Открытый (все)' }
-    };
-    var curMode  = botConfig.accessMode || 'private';
-    var modeObj  = modeMap[curMode] || modeMap.private;
-    var modeText = modeObj[l] || modeObj.ru;
-    var text = l==='uz'
-      ? '🤖 Bot sozlamalari\n\n✏️ Nom: '+esc(botConfig.botName)+'\n🎭 Uslub: '+pers+'\n🧬 Prompt: '+(hasPrompt?'Bor ✅':'Yo\'q')+'\n🔐 Kirish: '+modeText
+    var persObj = persMap[botConfig.personality]||persMap.friendly;
+    var pers    = persObj[l]||persObj.ru;
+    var infoText = l==='uz'
+      ? '🤖 Bot sozlamalari\n\nNom: '+esc(botConfig.botName)+'\nUslub: '+pers
       : l==='en'
-      ? '🤖 Bot settings\n\n✏️ Name: '+esc(botConfig.botName)+'\n🎭 Style: '+pers+'\n🧬 Prompt: '+(hasPrompt?'Set ✅':'Not set')+'\n🔐 Access: '+modeText
-      : '🤖 Настройки бота\n\n✏️ Имя: '+esc(botConfig.botName)+'\n🎭 Стиль: '+pers+'\n🧬 Промпт: '+(hasPrompt?'Есть ✅':'Нет')+'\n🔐 Доступ: '+modeText;
-    await ctx.editMessageText(text, Markup.inlineKeyboard([
-      [Markup.button.callback('✏️ '+(l==='uz'?'Bot nomi':l==='en'?'Bot name':'Имя'),'edit_name'),
+      ? '🤖 Bot settings\n\nName: '+esc(botConfig.botName)+'\nStyle: '+pers
+      : '🤖 Настройки бота\n\nИмя: '+esc(botConfig.botName)+'\nСтиль: '+pers;
+    await ctx.editMessageText(infoText, Markup.inlineKeyboard([
+      [Markup.button.callback('✏️ '+(l==='uz'?'Bot nomi':l==='en'?'Bot name':'Имя бота'),'edit_name'),
        Markup.button.callback('🎭 '+(l==='uz'?'Uslub':l==='en'?'Style':'Стиль'),'edit_personality')],
-      [Markup.button.callback('🧬 Promptizatsiya','prz_main')],
-      [Markup.button.callback('🔐 '+(l==='uz'?'Kirish rejimi':l==='en'?'Access mode':'Режим доступа'),'sett_access_mode')],
-      [Markup.button.callback('◀️ '+(l==='uz'?'Orqaga':l==='en'?'Back':'Назад'),'sett_main_back')]
+      [Markup.button.callback('◀️ '+(l==='uz'?'Orqaga':l==='en'?'Back':'Назад'),'sett_back')]
     ]));
   });
 
-  // ── Kirish rejimi tanlash ──
-  bot.action('sett_access_mode', async (ctx) => {
-    await ctx.answerCbQuery();
-    var l       = lang(ctx);
-    var curMode = botConfig.accessMode || 'private';
-    var text    = l==='uz'
-      ? '🔐 Kirish rejimi\n\nHozirgi: '+(curMode==='private'?'🔒 Shaxsiy':curMode==='whitelist'?'👥 Whitelist':'🌐 Ochiq')+'\n\n🔒 Shaxsiy — faqat siz\n👥 Whitelist — ruxsat bergan odamlar\n🌐 Ochiq — hamma, lekin limitlangan'
-      : l==='en'
-      ? '🔐 Access mode\n\nCurrent: '+(curMode==='private'?'🔒 Private':curMode==='whitelist'?'👥 Whitelist':'🌐 Open')+'\n\n🔒 Private — only you\n👥 Whitelist — users you add\n🌐 Open — everyone with limits'
-      : '🔐 Режим доступа\n\nТекущий: '+(curMode==='private'?'🔒 Личный':curMode==='whitelist'?'👥 Whitelist':'🌐 Открытый')+'\n\n🔒 Личный — только вы\n👥 Whitelist — добавленные пользователи\n🌐 Открытый — все с лимитами';
-    var mk = Markup.inlineKeyboard([
-      [Markup.button.callback((curMode==='private'?'✅ ':'')+'🔒 '+(l==='uz'?'Shaxsiy':l==='en'?'Private':'Личный'),'set_access_private')],
-      [Markup.button.callback((curMode==='whitelist'?'✅ ':'')+'👥 Whitelist','set_access_whitelist')],
-      [Markup.button.callback((curMode==='open'?'✅ ':'')+'🌐 '+(l==='uz'?'Ochiq':l==='en'?'Open':'Открытый'),'set_access_open')],
-      [Markup.button.callback('◀️ '+(l==='uz'?'Orqaga':l==='en'?'Back':'Назад'),'sett_section_bot')]
-    ]);
-    await ctx.editMessageText(text, mk);
-  });
-
-  bot.action(/^set_access_(private|whitelist|open)$/, async (ctx) => {
-    await ctx.answerCbQuery();
-    var newMode = ctx.match[1];
-    var l       = lang(ctx);
-    await UserBot.findByIdAndUpdate(botConfig._id, { $set: { accessMode: newMode } });
-    botConfig.accessMode = newMode;
-    var modeNames = {
-      private:   {uz:'🔒 Shaxsiy',   en:'🔒 Private',  ru:'🔒 Личный'},
-      whitelist: {uz:'👥 Whitelist',  en:'👥 Whitelist', ru:'👥 Whitelist'},
-      open:      {uz:'🌐 Ochiq',      en:'🌐 Open',       ru:'🌐 Открытый'}
-    };
-    var mn = (modeNames[newMode]||modeNames.private)[l] || (modeNames[newMode]||modeNames.private).ru;
-    await ctx.editMessageText(
-      l==='uz' ? '✅ Kirish rejimi o\'zgartirildi: '+mn
-      :l==='en' ? '✅ Access mode changed: '+mn
-      :'✅ Режим доступа изменён: '+mn
-    );
-    setTimeout(async()=>{try{await ctx.deleteMessage();}catch(_){}},2000);
-  });
-
-  // ── 2-bo'lim: Interfeys sozlamalari (hamma uchun) ──
-  bot.action('sett_section_interface', async (ctx) => {
+  bot.action('sett_back', async (ctx) => {
     await ctx.answerCbQuery();
     var uid   = String(ctx.from.id);
+    var isOwn = uid === String(botConfig.ownerTelegramId);
     var l     = lang(ctx);
-    var fresh = await UserBot.findById(botConfig._id);
-    var plan  = fresh ? (fresh.currentPlan||'free') : 'free';
-    var maxP  = PLAN_LIMITS[plan].personas;
-    var cnt   = await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
-    var text  = l==='uz'
-      ? '👤 Interfeys sozlamalari\n\n🧠 Modellarim: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n🌐 Til: '+({uz:"O'zbek",ru:'Rus',en:'Ingliz'}[botConfig.language]||"O'zbek")
+    var profile = await getUserProfile(uid);
+    var plan    = profile.currentPlan || 'free';
+    var maxP    = PLAN_LIMITS[plan].personas;
+    var cnt     = await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
+    var settTitle = l==='uz'
+      ? '⚙️ Sozlamalar\n\nMening modellarim: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n\nModel — bu AI ning suhbat uslubi.'
       : l==='en'
-      ? '👤 Interface settings\n\n🧠 Personas: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n🌐 Language: '+({uz:'Uzbek',ru:'Russian',en:'English'}[botConfig.language]||'Uzbek')
-      : '👤 Настройки интерфейса\n\n🧠 Персоны: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n🌐 Язык: '+({uz:'Узбекский',ru:'Русский',en:'Английский'}[botConfig.language]||'Узбекский');
-    await ctx.editMessageText(text, Markup.inlineKeyboard([
-      [Markup.button.callback(l==='uz'?"🧠 Modellarni ko'rish":l==='en'?'🧠 View personas':'🧠 Персоны','show_personas')],
-      [Markup.button.callback(l==='uz'?'➕ Yangi model':l==='en'?'➕ New persona':'➕ Новая персона','create_persona'),
-       Markup.button.callback(l==='uz'?'📋 Tayyor modellar':l==='en'?'📋 Ready':'📋 Готовые','builtin_personas')],
+      ? '⚙️ Settings\n\nMy personas: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n\nA persona is an AI conversation style.'
+      : '⚙️ Настройки\n\nМои персоны: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n\nПерсона — стиль общения AI.';
+    var settBtns = [];
+    if (isOwn) settBtns.push([Markup.button.callback(t('btn_bot_settings',l),'sett_bot_config')]);
+    settBtns.push(
+      [Markup.button.callback(l==='uz'?"🧠 Modellarni ko'rish":l==='en'?'🧠 View personas':'🧠 Просмотр персон','show_personas')],
+      [Markup.button.callback(l==='uz'?'➕ Yangi model yaratish':l==='en'?'➕ Create new persona':'➕ Создать персону','create_persona')],
+      [Markup.button.callback(l==='uz'?'📋 Tayyor modellar':l==='en'?'📋 Ready personas':'📋 Готовые персоны','builtin_personas')],
       [Markup.button.callback(t('btn_change_lang',l),'change_interface_lang')],
-      [Markup.button.callback(l==='uz'?'🗑 Xotirani tozalash':l==='en'?'🗑 Clear memory':'🗑 Очистить память','confirm_clear_from_sett')],
-      [Markup.button.callback('◀️ '+(l==='uz'?'Orqaga':l==='en'?'Back':'Назад'),'sett_main_back')]
-    ]));
-  });
-
-  bot.action('sett_main_back', async (ctx) => {
-    await ctx.answerCbQuery();
-    await showSettingsMain(ctx, true);
-  });
-
-  // Tozalash — sozlamalardan
-  bot.action('confirm_clear_from_sett', async (ctx) => {
-    await ctx.answerCbQuery();
-    var l = lang(ctx);
-    await ctx.editMessageText(
-      l==='uz'?'🗑 Asosiy xotirani tozalashni tasdiqlaysizmi?\n\n(Qaytarib bo\'lmaydi)':
-      l==='en'?'🗑 Clear main memory? (Cannot be undone)':
-      '🗑 Очистить основную память? (Нельзя отменить)',
-      Markup.inlineKeyboard([
-        [Markup.button.callback(l==='uz'?'✅ Ha, tozala':l==='en'?'✅ Yes, clear':'✅ Да, очистить','confirm_clear'),
-         Markup.button.callback(l==='uz'?'❌ Bekor':l==='en'?'❌ Cancel':'❌ Отмена','sett_section_interface')]
-      ])
+      [Markup.button.callback(t('btn_close',l),'zone_close')]
     );
+    await ctx.editMessageText(settTitle, Markup.inlineKeyboard(settBtns));
   });
-
-
-
 
   bot.action('show_personas', async (ctx) => {
     await ctx.answerCbQuery();
@@ -1114,10 +1035,9 @@ async function launchUserBot(botConfig) {
     var uid=String(ctx.from.id);
     var bp=BUILTIN_PERSONAS.find(p=>p.key===ctx.match[1]);
     if (!bp) return ctx.editMessageText('Topilmadi.');
-    var fresh=await UserBot.findById(botConfig._id);
-    var plan=fresh?(fresh.currentPlan||'free'):'free';
+    var profile = await getUserProfile(uid);
     var cnt=await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
-    var chk=await checkPersonaLimit({currentPlan:plan},cnt,lang(ctx));
+    var chk=await checkPersonaLimit(profile,cnt,lang(ctx));
     if (!chk.allowed) return ctx.editMessageText(chk.msg,chk.keyboard||{});
     var ex=await Persona.findOne({botId:botConfig._id,userTelegramId:uid,name:bp.name,isActive:true});
     if (ex) return ctx.editMessageText(bp.emoji+' '+bp.name+' modeli allaqachon bor.');
@@ -1157,10 +1077,9 @@ async function launchUserBot(botConfig) {
   bot.action('create_persona', async (ctx) => {
     await ctx.answerCbQuery();
     var uid=String(ctx.from.id);
-    var fresh=await UserBot.findById(botConfig._id);
-    var plan=fresh?(fresh.currentPlan||'free'):'free';
+    var profile = await getUserProfile(uid);
     var cnt=await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
-    var chk=await checkPersonaLimit({currentPlan:plan},cnt,lang(ctx));
+    var chk=await checkPersonaLimit(profile,cnt,lang(ctx));
     if (!chk.allowed) return ctx.editMessageText(chk.msg,chk.keyboard||{});
     ctx.session=ctx.session||{}; ctx.session.step='persona_name'; ctx.session.newPersona={};
     await ctx.editMessageText('Yangi model yaratish\n\n1-qadam: Model nomini yozing.\nMisol: Biznes Maslahatchi, Shoir, Psixolog');
@@ -1248,13 +1167,14 @@ async function launchUserBot(botConfig) {
   bot.hears(['🎨 Prezentatsiya','🎨 Презентация','🎨 Presentation'], async (ctx) => {
     await notifySessionSavedIfNeeded(ctx);
     ctx.session=ctx.session||{}; ctx.session.ppt=null; ctx.session.step=null;
-    var fresh = await getFreshConfig();
-    var plan  = fresh.currentPlan||'free';
-    var l     = lang(ctx);
-    var canPro = PLAN_LIMITS[plan].pptPro>0;
+    var uid     = String(ctx.from.id);
+    var profile = await getUserProfile(uid);
+    var plan    = profile.currentPlan || 'free';
+    var l       = lang(ctx);
+    var canPro  = PLAN_LIMITS[plan].pptPro > 0;
     var hdr = (l==='uz'?'🎨 Prezentatsiya yaratish\n\n':l==='en'?'🎨 Create Presentation\n\n':'🎨 Создание Презентации\n\n')+
       (canPro?t('ppt_mode_pro',l)+'\n\n':t('ppt_mode_simple',l)+'\n\n')+t('ppt_question',l);
-    await openZone(ctx,hdr,pptMenu(plan,l));
+    await openZone(ctx, hdr, pptMenu(plan, l));
   });
 
   bot.action('ppt_diff', async (ctx) => {
@@ -1277,16 +1197,18 @@ async function launchUserBot(botConfig) {
   bot.action('ppt_back', async (ctx) => {
     await ctx.answerCbQuery();
     ctx.session=ctx.session||{}; ctx.session.ppt=null; ctx.session.step=null;
-    var fresh=await getFreshConfig();
-    var plan=fresh.currentPlan||'free';
+    var uid     = String(ctx.from.id);
+    var profile = await getUserProfile(uid);
+    var plan    = profile.currentPlan || 'free';
     var l=lang(ctx);
     await ctx.editMessageText('🎨 Prezentatsiya yaratish\n\n'+t('ppt_question',l),pptMenu(plan,l));
   });
 
   bot.action('ppt_start_simple', async (ctx) => {
     await ctx.answerCbQuery();
-    var fresh=await getFreshConfig();
-    var chk=await checkPptLimit(fresh,lang(ctx));
+    var uid=String(ctx.from.id);
+    var profile = await getUserProfile(uid);
+    var chk=await checkPptLimit(profile,lang(ctx));
     if (!chk.allowed) return ctx.editMessageText(chk.msg,chk.keyboard||{});
     ctx.session=ctx.session||{}; ctx.session.ppt={mode:'simple'}; ctx.session.step='ppt_topic';
     await ctx.editMessageText('📄 Oddiy prezentatsiya\n\nMavzu nima haqida?\n\n💡 Misol: Fotosintez, AI, Marketing\n\n'+t('ppt_topic_prompt',lang(ctx)));
@@ -1294,10 +1216,11 @@ async function launchUserBot(botConfig) {
 
   bot.action('ppt_start_pro', async (ctx) => {
     await ctx.answerCbQuery();
-    var fresh=await getFreshConfig();
-    var plan=fresh.currentPlan||'free';
+    var uid=String(ctx.from.id);
+    var profile = await getUserProfile(uid);
+    var plan=profile.currentPlan||'free';
     if (PLAN_LIMITS[plan].pptPro===0) return ctx.editMessageText(t('limit_reached_ppt_pro',lang(ctx),plan),Markup.inlineKeyboard([[Markup.button.callback(t('btn_subscribe',lang(ctx)),'sub_show_plans')]]));
-    var chk=await checkPptProLimit(fresh,lang(ctx));
+    var chk=await checkPptProLimit(profile,lang(ctx));
     if (!chk.allowed) return ctx.editMessageText(chk.msg,chk.keyboard||{});
     ctx.session=ctx.session||{}; ctx.session.ppt={mode:'pro'}; ctx.session.step='ppt_topic';
     await ctx.editMessageText('⭐ Professional prezentatsiya\n\nRang sxemasini tanlang:',Markup.inlineKeyboard([
@@ -1410,10 +1333,15 @@ async function launchUserBot(botConfig) {
       try{fs.unlinkSync(filePath);}catch(_){}
       imgPaths.forEach(p=>{try{fs.unlinkSync(p);}catch(_){}});
       var pptUid=String(ctx.from.id);
-      if (pptUid===String(botConfig.ownerTelegramId)) {
-        if (isPro){await UserBot.findByIdAndUpdate(botConfig._id,{$inc:{monthlyPptPro:1}}); botConfig.monthlyPptPro=(botConfig.monthlyPptPro||0)+1;}
-        else{await UserBot.findByIdAndUpdate(botConfig._id,{$inc:{monthlyPpt:1}}); botConfig.monthlyPpt=(botConfig.monthlyPpt||0)+1;}
+      // Har user uchun PPT counter yangilanadi
+      var pptProfile = await getUserProfile(pptUid);
+      if (isPro){
+        await UserProfile.findByIdAndUpdate(pptProfile._id,{$inc:{monthlyPptPro:1,totalMessages:0}});
+      } else {
+        await UserProfile.findByIdAndUpdate(pptProfile._id,{$inc:{monthlyPpt:1}});
       }
+      // Bot umumiy counter
+      await UserBot.findByIdAndUpdate(botConfig._id,{$inc:{totalMessages:1}});
       ctx.session.ppt=null; ctx.session.step=null; await clearZone(ctx);
     } catch(err) {
       console.error('[PPT] Xato:',err.message);
@@ -1428,8 +1356,7 @@ async function launchUserBot(botConfig) {
   bot.action(/^ctx_use_for_wizard_/, async (ctx) => { await ctx.answerCbQuery(); await ctx.editMessageText('Tushunarli ✓  Davom eting!'); });
 
   bot.on('photo', async (ctx) => {
-    var step = ctx.session && ctx.session.step;
-
+    var step=ctx.session&&ctx.session.step;
     if (step!=='ppt_images') { var lp=lang(ctx); return ctx.reply(lp==='uz'?'Rasmni tavsiflab yozing.':lp==='en'?'Please describe the image in text.':'Опишите изображение текстом.'); }
     var ppt=ctx.session.ppt||{}; var images=ppt.images||[]; var imgMax=ppt.imgMax||4;
     if (images.length>=imgMax) return ctx.reply('Maksimal rasm soni: '+imgMax+' ta.',Markup.inlineKeyboard([[Markup.button.callback('✅ Tayyor','ppt_images_done')]]));
@@ -1509,113 +1436,140 @@ async function launchUserBot(botConfig) {
   });
 
   // ═══════════════════════════════════════════════
-  // ⭐ OBUNA TIZIMI
+  // ⭐ OBUNA TIZIMI — Har bir user o'z obunasini oladi
   // ═══════════════════════════════════════════════
   bot.hears(['⭐ Obuna','⭐ Подписка','⭐ Subscribe'], async (ctx) => {
     await notifySessionSavedIfNeeded(ctx);
-    if (String(ctx.from.id)!==String(botConfig.ownerTelegramId)) return;
-    await showSubMenu(ctx,false);
+    await showSubMenu(ctx, false);
   });
 
   bot.action('sub_show_plans', async (ctx) => {
     await ctx.answerCbQuery();
-    // Faqat egasi — boshqa foydalanuvchilar obuna menyusiga kira olmaydi
-    if (String(ctx.from.id) !== String(botConfig.ownerTelegramId)) {
-      return ctx.answerCbQuery("Bu bo'lim faqat bot egasi uchun.", true);
-    }
     await showSubMenu(ctx, true);
   });
 
-  async function showSubMenu(ctx,edit) {
-    var uid=String(ctx.from.id); var l=lang(ctx);
-    var fresh=await UserBot.findById(botConfig._id);
-    var plan=fresh?(fresh.currentPlan||'free'):'free';
-    var sub=await Subscription.findOne({telegramId:uid,status:{$in:['active','grace']}}).sort({activatedAt:-1});
+  async function showSubMenu(ctx, edit) {
+    var uid     = String(ctx.from.id);
+    var l       = lang(ctx);
+    var profile = await getUserProfile(uid);
+    var plan    = profile.currentPlan || 'free';
+    var sub     = await Subscription.findOne({telegramId:uid, botId:botConfig._id, status:{$in:['active','grace']}}).sort({activatedAt:-1});
     var msgText;
-    if (!sub||plan==='free') {
-      msgText=t('sub_current_free',l);
-    } else if (sub.status==='grace') {
-      msgText=t('sub_current_grace',l,PLAN_NAMES[sub.plan]||sub.plan,sub.graceEndsAt?sub.graceEndsAt.toLocaleDateString('ru-RU'):'—');
+    if (!sub || plan === 'free') {
+      msgText = t('sub_current_free', l);
+    } else if (sub.status === 'grace') {
+      msgText = t('sub_current_grace', l, PLAN_NAMES[sub.plan]||sub.plan, sub.graceEndsAt?sub.graceEndsAt.toLocaleDateString('ru-RU'):'—');
     } else {
-      var dl=sub.expiresAt?Math.ceil((sub.expiresAt-new Date())/(1000*60*60*24)):0;
-      msgText=t('sub_current_active',l,PLAN_NAMES[sub.plan]||sub.plan,sub.expiresAt?sub.expiresAt.toLocaleDateString('ru-RU'):'—',dl);
+      var dl = sub.expiresAt ? Math.ceil((sub.expiresAt - new Date()) / (1000*60*60*24)) : 0;
+      msgText = t('sub_current_active', l, PLAN_NAMES[sub.plan]||sub.plan, sub.expiresAt?sub.expiresAt.toLocaleDateString('ru-RU'):'—', dl);
     }
-    var btns=[
-      [Markup.button.callback('⭐ Starter — 19,000/oy','sub_select_plan_starter')],
-      [Markup.button.callback('🚀 Pro — 39,000/oy','sub_select_plan_pro')],
-      [Markup.button.callback('💎 Premium — 59,000/oy','sub_select_plan_premium')],
-      [Markup.button.callback(l==='uz'?'ℹ️ Tariflar taqqoslovi':l==='en'?'ℹ️ Compare plans':'ℹ️ Сравнение тарифов','sub_compare')],
-      [Markup.button.callback(t('btn_close',l),'zone_close')]
+    var btns = [
+      [Markup.button.callback('⭐ Starter — 19,000/oy', 'sub_select_plan_starter')],
+      [Markup.button.callback('🚀 Pro — 39,000/oy',     'sub_select_plan_pro')],
+      [Markup.button.callback('💎 Premium — 59,000/oy', 'sub_select_plan_premium')],
+      [Markup.button.callback(l==='uz'?'ℹ️ Tariflar taqqoslovi':l==='en'?'ℹ️ Compare plans':'ℹ️ Сравнение тарифов', 'sub_compare')],
+      [Markup.button.callback(t('btn_close', l), 'zone_close')]
     ];
-    if (edit) await updateZone(ctx,msgText,Markup.inlineKeyboard(btns));
-    else       await openZone(ctx,msgText,Markup.inlineKeyboard(btns));
+    if (edit) await updateZone(ctx, msgText, Markup.inlineKeyboard(btns));
+    else       await openZone(ctx, msgText, Markup.inlineKeyboard(btns));
   }
 
   bot.action('sub_compare', async (ctx) => {
     await ctx.answerCbQuery();
-    var l=lang(ctx);
-    await ctx.editMessageText(t('sub_compare',l),{
-      parse_mode:'HTML',
+    var l = lang(ctx);
+    await ctx.editMessageText(t('sub_compare', l), {
+      parse_mode: 'HTML',
       reply_markup: Markup.inlineKeyboard([
-        [Markup.button.callback('⭐ Starter','sub_select_plan_starter'),
-         Markup.button.callback('🚀 Pro','sub_select_plan_pro'),
-         Markup.button.callback('💎 Premium','sub_select_plan_premium')],
-        [Markup.button.callback('◀️ '+(l==='uz'?'Orqaga':l==='en'?'Back':'Назад'),'sub_show_plans')]
+        [Markup.button.callback('⭐ Starter', 'sub_select_plan_starter'),
+         Markup.button.callback('🚀 Pro',     'sub_select_plan_pro'),
+         Markup.button.callback('💎 Premium', 'sub_select_plan_premium')],
+        [Markup.button.callback('◀️ '+(l==='uz'?'Orqaga':l==='en'?'Back':'Назад'), 'sub_show_plans')]
       ]).reply_markup
     });
   });
 
   bot.action(/^sub_select_plan_(starter|pro|premium)$/, async (ctx) => {
     await ctx.answerCbQuery();
-    var selPlan=ctx.match[1]; var uid=String(ctx.from.id); var l=lang(ctx);
-    var pending=await Subscription.findOne({telegramId:uid,status:'pending'});
-    if (pending) return ctx.editMessageText(t('sub_pending_exists',l,pending.uniqueId));
-    var uniqueId=await generateUniqueId(selPlan);
-    var price=PLAN_PRICES[selPlan].discounted;
-    var planName=PLAN_NAMES[selPlan];
-    await Subscription.create({telegramId:uid,firstName:ctx.from.first_name||'',username:ctx.from.username||'',plan:selPlan,uniqueId,price,durationMonths:1,status:'pending'});
-    await ctx.editMessageText(t('sub_order_created',l,planName,price,uniqueId,_cardNumber||"Admin dan so'rang"));
-    var payLink=subscribeLink(selPlan,uniqueId);
-    var payText=t('sub_order_text',l,planName,uniqueId);
+    var selPlan  = ctx.match[1];
+    var uid      = String(ctx.from.id);
+    var l        = lang(ctx);
+    var pending  = await Subscription.findOne({telegramId:uid, botId:botConfig._id, status:'pending'});
+    if (pending) return ctx.editMessageText(t('sub_pending_exists', l, pending.uniqueId));
+    var uniqueId = await generateUniqueId(selPlan);
+    var price    = PLAN_PRICES[selPlan].discounted;
+    var planName = PLAN_NAMES[selPlan];
+    await Subscription.create({
+      telegramId: uid,
+      botId:      botConfig._id,
+      firstName:  ctx.from.first_name || '',
+      username:   ctx.from.username   || '',
+      plan:       selPlan,
+      uniqueId,
+      price,
+      durationMonths: 1,
+      status: 'pending'
+    });
+    await ctx.editMessageText(t('sub_order_created', l, planName, price, uniqueId, _cardNumber||"Admin dan so'rang"));
+    var payLink = subscribeLink(selPlan, uniqueId);
+    var payText = t('sub_order_text', l, planName, uniqueId);
     await ctx.reply(
-      (l==='uz'?"📋 Quyidagi tugmani bosing — admin chatiga o'ting va tolov qilganingizni bildiring:":l==='en'?'📋 Press the button below — go to admin chat and confirm your payment:':'📋 Нажмите кнопку ниже — перейдите в чат админа и подтвердите оплату:')+'\n\n"'+payText+'"',
-      Markup.inlineKeyboard([[Markup.button.url(t('btn_sub_pay',l),payLink)]])
+      (l==='uz' ? "📋 Quyidagi tugmani bosing — admin chatiga o'ting va to'lov qilganingizni bildiring:"
+       :l==='en' ? '📋 Press the button below — go to admin chat and confirm your payment:'
+       :'📋 Нажмите кнопку ниже — перейдите в чат админа и подтвердите оплату:')
+      + '\n\n"' + payText + '"',
+      Markup.inlineKeyboard([[Markup.button.url(t('btn_sub_pay', l), payLink)]])
     );
     try {
       await bot.telegram.sendMessage(process.env.SUPER_ADMIN_ID,
-        "⭐ Yangi obuna so'rovi!\n\nFoydalanuvchi: "+(ctx.from.first_name||'')+(ctx.from.username?' (@'+ctx.from.username+')':'')+'\nTelegram ID: '+uid+'\nTarif: '+planName+'\nID: '+uniqueId+"\nNarx: "+price+" som/oy\n\nTasdiqlash: /activate "+uniqueId,
-        {reply_markup:Markup.inlineKeyboard([[Markup.button.callback('✅ Tasdiqlash — '+uniqueId,'adm_activate_'+uniqueId)]]).reply_markup}
+        "⭐ Yangi obuna so'rovi!\n\nFoydalanuvchi: "+(ctx.from.first_name||'')+(ctx.from.username?' (@'+ctx.from.username+')':'')
+        +'\nTelegram ID: '+uid+'\nBot: @'+botConfig.botUsername
+        +'\nTarif: '+planName+'\nID: '+uniqueId+"\nNarx: "+price+" so'm/oy\n\nTasdiqlash: /activate "+uniqueId,
+        {reply_markup: Markup.inlineKeyboard([[Markup.button.callback('✅ Tasdiqlash — '+uniqueId, 'adm_activate_'+uniqueId)]]).reply_markup}
       );
-    }catch(e){console.error('[Sub] Admin ga xabar xato:',e.message);}
+    } catch(e) { console.error('[Sub] Admin ga xabar xato:', e.message); }
   });
 
   bot.action(/^adm_activate_(.+)$/, async (ctx) => {
-    if (String(ctx.from.id)!==String(process.env.SUPER_ADMIN_ID)) return ctx.answerCbQuery('Faqat admin!');
+    if (String(ctx.from.id) !== String(process.env.SUPER_ADMIN_ID)) return ctx.answerCbQuery('Faqat admin!');
     await ctx.answerCbQuery('Tasdiqlanmoqda...');
-    await activateSubscriptionById(ctx,ctx.match[1]);
+    await activateSubscriptionById(ctx, ctx.match[1]);
   });
 
   async function activateSubscriptionById(ctx, uniqueId) {
     try {
-      var sub=await Subscription.findOne({uniqueId,status:'pending'});
+      var sub = await Subscription.findOne({uniqueId, status:'pending'});
       if (!sub) { await ctx.editMessageText('❌ '+uniqueId+" — topilmadi yoki allaqachon faol."); return null; }
-      var now=new Date();
-      var expiresAt=new Date(now); expiresAt.setMonth(expiresAt.getMonth()+(sub.durationMonths||1));
-      var graceEndsAt=new Date(expiresAt); graceEndsAt.setDate(graceEndsAt.getDate()+GRACE_DAYS);
-      sub.status='active'; sub.activatedAt=now; sub.expiresAt=expiresAt; sub.graceEndsAt=graceEndsAt;
-      sub.notified7d=false; sub.notified1d=false;
+      var now         = new Date();
+      var expiresAt   = new Date(now); expiresAt.setMonth(expiresAt.getMonth() + (sub.durationMonths||1));
+      var graceEndsAt = new Date(expiresAt); graceEndsAt.setDate(graceEndsAt.getDate() + GRACE_DAYS);
+      sub.status      = 'active';
+      sub.activatedAt = now;
+      sub.expiresAt   = expiresAt;
+      sub.graceEndsAt = graceEndsAt;
+      sub.notified7d  = false;
+      sub.notified1d  = false;
       await sub.save();
-      await UserBot.findByIdAndUpdate(botConfig._id,{$set:{currentPlan:sub.plan}});
-      // RAM yangilash — shu bot instance
-      botConfig.currentPlan=sub.plan;
-      var expires=expiresAt.toLocaleDateString('ru-RU');
-      var planName=PLAN_NAMES[sub.plan]||sub.plan;
-      try{ await bot.telegram.sendMessage(sub.telegramId,t('sub_activated','uz',planName,expires)); }catch(e){}
-      await ctx.editMessageText('✅ '+uniqueId+' faollashtirildi!\n\nFoydalanuvchi: '+(sub.firstName||'')+(sub.username?' @'+sub.username:'')+'\nTarif: '+planName+'\nMuddat: '+expires+' gacha');
+      // Foydalanuvchining UserProfile ni yangilash (UserBot emas!)
+      var botIdForSub = sub.botId || botConfig._id;
+      await UserProfile.findOneAndUpdate(
+        { botId: botIdForSub, userTelegramId: String(sub.telegramId) },
+        { $set: { currentPlan: sub.plan } },
+        { upsert: true }
+      );
+      var expires  = expiresAt.toLocaleDateString('ru-RU');
+      var planName = PLAN_NAMES[sub.plan] || sub.plan;
+      try { await bot.telegram.sendMessage(sub.telegramId, t('sub_activated', 'uz', planName, expires)); } catch(e) {}
+      await ctx.editMessageText(
+        '✅ '+uniqueId+' faollashtirildi!\n\nFoydalanuvchi: '+(sub.firstName||'')+(sub.username?' @'+sub.username:'')
+        +'\nTarif: '+planName+'\nMuddat: '+expires+' gacha'
+      );
       return sub;
-    } catch(err) { console.error('[Sub] Aktivlash xato:',err.message); await ctx.editMessageText('❌ Xato: '+err.message); return null; }
+    } catch(err) {
+      console.error('[Sub] Aktivlash xato:', err.message);
+      await ctx.editMessageText('❌ Xato: '+err.message);
+      return null;
+    }
   }
-
   // ═══════════════════════════════════════════════
   // MEDIA HANDLERLARI
   // ═══════════════════════════════════════════════
@@ -1794,341 +1748,14 @@ async function launchUserBot(botConfig) {
     return lines.join('\n');
   }
 
+  bot.on('voice',(ctx)=>{ var l=lang(ctx); return ctx.reply(l==='uz'?"Ovozni matnga o'girib yozing!":l==='en'?'Please type instead.':'Напишите текстом.'); });
+  bot.on('document',(ctx)=>{ var l=lang(ctx); return ctx.reply(l==='uz'?'Fayl mazmunini yozib yuboring.':l==='en'?'Describe the document in text.':'Опишите файл текстом.'); });
+  bot.on('sticker',(ctx)=>ctx.reply('😊'));
 
   // ═══════════════════════════════════════════════
-  // 🌐 WEB INTERFEYS — Telegram Mini App
+  // MATN HANDLERI — ASOSIY
   // ═══════════════════════════════════════════════
-  ;
-
-
-
-  // ═══════════════════════════════════════════════
-  // 🏢 GURUH VA KANAL HANDLERLARI
-  // ═══════════════════════════════════════════════
-
-  // Bot guruhga qo'shilganda yoki chiqarilganda
-  bot.on('my_chat_member', async (ctx) => {
-    try {
-      var chat   = ctx.chat;
-      var update = ctx.update.my_chat_member;
-      var newSt  = update.new_chat_member.status;
-      var oldSt  = update.old_chat_member.status;
-      var addedBy = String(update.from.id);
-
-      if (chat.type !== 'group' && chat.type !== 'supergroup') return;
-
-      if (['member','administrator'].includes(newSt) && ['left','kicked'].includes(oldSt)) {
-        // Bot guruhga qo'shildi
-        var existing = await GroupConfig.findOne({ chatId: String(chat.id), botId: botConfig._id });
-        if (!existing) {
-          await GroupConfig.create({
-            chatId:        String(chat.id),
-            chatTitle:     chat.title || '',
-            chatType:      chat.type,
-            botId:         botConfig._id,
-            addedByUserId: addedBy,
-            currentPlan:   'free',
-            replyMode:     'mention',
-            isActive:      true
-          });
-        } else {
-          await GroupConfig.findOneAndUpdate(
-            { chatId: String(chat.id), botId: botConfig._id },
-            { $set: { isActive: true, chatTitle: chat.title || '' } }
-          );
-        }
-        // Xush kelibsiz xabari
-        try {
-          var l = botConfig.language || 'uz';
-          await ctx.reply(
-            l==='uz'
-              ? '👋 Salom! Men '+esc(botConfig.botName)+'.\n\nGuruhda ishlash uchun meni mention qiling: @'+botConfig.botUsername+'\n\n📊 Hozirgi tarif: Free (oyiga 100 ta xabar)\n💡 Ko\'proq uchun /groupplan'
-              : l==='en'
-              ? '👋 Hello! I am '+esc(botConfig.botName)+'.\n\nMention me to chat: @'+botConfig.botUsername+'\n\n📊 Current plan: Free (100 messages/month)\n💡 Upgrade: /groupplan'
-              : '👋 Привет! Я '+esc(botConfig.botName)+'.\n\nОбращайтесь ко мне: @'+botConfig.botUsername+'\n\n📊 Тариф: Free (100 сообщений/мес)\n💡 Улучшить: /groupplan'
-          );
-        } catch(_) {}
-      } else if (['left','kicked'].includes(newSt)) {
-        // Bot guruhdan chiqarildi
-        await GroupConfig.findOneAndUpdate(
-          { chatId: String(chat.id), botId: botConfig._id },
-          { $set: { isActive: false } }
-        );
-      }
-    } catch(e) {
-      console.error('[Group] my_chat_member xato:', e.message);
-    }
-  });
-
-  // Guruh xabarlari — mention yoki reply bo'lsa javob beradi
-  bot.on('message', async (ctx) => {
-    try {
-      var chatType = ctx.chat && ctx.chat.type;
-      if (chatType !== 'group' && chatType !== 'supergroup') return;
-
-      var text = ctx.message && (ctx.message.text || ctx.message.caption) || '';
-      if (!text.trim()) return;
-
-      var gCfg = await GroupConfig.findOne({ chatId: String(ctx.chat.id), botId: botConfig._id, isActive: true });
-      if (!gCfg) return;
-
-      // Mention yoki reply tekshiruvi
-      var botUsername = botConfig.botUsername || '';
-      var isMentioned = text.includes('@' + botUsername);
-      var isReply     = !!(ctx.message.reply_to_message &&
-                           ctx.message.reply_to_message.from &&
-                           String(ctx.message.reply_to_message.from.id) === String(ctx.botInfo && ctx.botInfo.id));
-
-      var replyMode = gCfg.replyMode || 'mention';
-      var shouldReply = false;
-      if (replyMode === 'mention') shouldReply = isMentioned;
-      else if (replyMode === 'reply')   shouldReply = isReply;
-      else if (replyMode === 'all')     shouldReply = true;
-      if (!shouldReply) return;
-
-      // Oylik reset
-      var now = new Date().toISOString().slice(0, 7);
-      if (gCfg.monthlyReset !== now) {
-        await GroupConfig.findByIdAndUpdate(gCfg._id, {
-          $set: { monthlyMessages: 0, monthlyReset: now }
-        });
-        gCfg.monthlyMessages = 0;
-        gCfg.monthlyReset    = now;
-      }
-
-      // Limit tekshiruvi
-      var gPlan  = gCfg.currentPlan || 'free';
-      var gLimit = GROUP_PLAN_LIMITS[gPlan] ? GROUP_PLAN_LIMITS[gPlan].ai : 100;
-      var gUsed  = gCfg.monthlyMessages || 0;
-
-      if (gLimit !== Infinity && gUsed >= gLimit) {
-        var l = botConfig.language || 'uz';
-        return ctx.reply(
-          l==='uz'
-            ? '⚠️ Guruh limiti tugadi.\n\n'+PLAN_NAMES[gPlan]+' tarifida oyiga '+gLimit+' ta xabar. Tarifni yangilash uchun /groupplan yuboring.'
-            : l==='en'
-            ? '⚠️ Group limit reached.\n\n'+PLAN_NAMES[gPlan]+' plan: '+gLimit+' messages/month. Type /groupplan to upgrade.'
-            : '⚠️ Лимит группы исчерпан.\n\n'+PLAN_NAMES[gPlan]+': '+gLimit+' сообщений/мес. Для улучшения: /groupplan',
-          { reply_to_message_id: ctx.message.message_id }
-        );
-      }
-
-      // Mention matnini tozalash
-      var cleanText = text.replace(new RegExp('@' + botUsername, 'g'), '').trim();
-      if (!cleanText) return;
-
-      // AI ga yuborish
-      await ctx.sendChatAction('typing');
-      var cfg2 = botConfig.toObject ? botConfig.toObject() : Object.assign({}, botConfig);
-
-      // Guruh xotirasini olish (chatId asosida)
-      var gHistKey = 'group_' + ctx.chat.id;
-      var gHist    = await (require('./models/ChatHistory')).findOne({
-        botId: botConfig._id, userTelegramId: gHistKey
-      });
-      var gMsgs = (gHist && gHist.messages) ? gHist.messages.slice(-20) : [];
-
-      var aiResult = await getAIResponse(cfg2, gMsgs, cleanText, ctx.from.first_name || "Do'st");
-      var aiReply  = typeof aiResult === 'object' ? aiResult.text : aiResult;
-      var useHTML  = typeof aiResult === 'object' ? aiResult.html : false;
-
-      // Xotirani saqlash
-      var newGMsgs = gMsgs.concat([
-        { role: 'user', content: cleanText },
-        { role: 'assistant', content: aiReply }
-      ]);
-      if (newGMsgs.length > 40) newGMsgs = newGMsgs.slice(-40);
-
-      var GChatHistory = require('./models/ChatHistory');
-      var gH2 = await GChatHistory.findOne({ botId: botConfig._id, userTelegramId: gHistKey });
-      if (!gH2) gH2 = new GChatHistory({ botId: botConfig._id, userTelegramId: gHistKey, messages: [] });
-      gH2.messages = newGMsgs; gH2.updatedAt = new Date();
-      await gH2.save();
-
-      // Counter
-      await GroupConfig.findByIdAndUpdate(gCfg._id, { $inc: { monthlyMessages: 1 } });
-
-      // Javob yuborish
-      await sendLongMessage(ctx, aiReply, useHTML, { reply_to_message_id: ctx.message.message_id });
-
-    } catch(e) {
-      console.error('[Group] message xato:', e.message);
-    }
-  });
-
-  // /grouplimit — guruh limitini ko'rish
-  bot.command('grouplimit', async (ctx) => {
-    if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return;
-    var gCfg = await GroupConfig.findOne({ chatId: String(ctx.chat.id), botId: botConfig._id });
-    if (!gCfg) return;
-    var l     = botConfig.language || 'uz';
-    var plan  = gCfg.currentPlan || 'free';
-    var lim   = GROUP_PLAN_LIMITS[plan] ? GROUP_PLAN_LIMITS[plan].ai : 100;
-    var used  = gCfg.monthlyMessages || 0;
-    var pct   = lim === Infinity ? 0 : Math.round((used / lim) * 100);
-    var bar   = '█'.repeat(Math.floor(pct/10)) + '░'.repeat(10 - Math.floor(pct/10));
-    ctx.reply(
-      l==='uz'
-        ? '📊 Guruh limiti\n\n'+bar+' '+pct+'%\n'+used+' / '+(lim===Infinity?'∞':lim)+' xabar\n\nTarif: '+PLAN_NAMES[plan]+'\n💡 Yangilash: /groupplan'
-        : l==='en'
-        ? '📊 Group usage\n\n'+bar+' '+pct+'%\n'+used+' / '+(lim===Infinity?'∞':lim)+' messages\n\nPlan: '+PLAN_NAMES[plan]+'\n💡 Upgrade: /groupplan'
-        : '📊 Лимит группы\n\n'+bar+' '+pct+'%\n'+used+' / '+(lim===Infinity?'∞':lim)+' сообщений\n\nТариф: '+PLAN_NAMES[plan]+'\n💡 Улучшить: /groupplan',
-      { reply_to_message_id: ctx.message.message_id }
-    );
-  });
-
-  // /groupplan — guruh tarifini ko'rish va yangilash
-  bot.command('groupplan', async (ctx) => {
-    if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return;
-    var gCfg = await GroupConfig.findOne({ chatId: String(ctx.chat.id), botId: botConfig._id });
-    if (!gCfg) return;
-    var l    = botConfig.language || 'uz';
-    var plan = gCfg.currentPlan || 'free';
-    var txt  = l==='uz'
-      ? '💳 Guruh tarifi: '+PLAN_NAMES[plan]+'\n\n⭐ Starter — 19,000/oy (1,000 xabar)\n🚀 Pro — 39,000/oy (5,000 xabar)\n💎 Premium — 59,000/oy (cheksiz)\n\nBarcha tarifda PPT va boshqa funksiyalar mavjud.'
-      : l==='en'
-      ? '💳 Group plan: '+PLAN_NAMES[plan]+'\n\n⭐ Starter — 19,000/mo (1,000 msgs)\n🚀 Pro — 39,000/mo (5,000 msgs)\n💎 Premium — 59,000/mo (unlimited)\n\nAll plans include PPT and other features.'
-      : '💳 Тариф группы: '+PLAN_NAMES[plan]+'\n\n⭐ Starter — 19,000/мес (1,000 сообщ)\n🚀 Pro — 39,000/мес (5,000 сообщ)\n💎 Premium — 59,000/мес (безлимит)\n\nВо всех тарифах доступны PPT и другие функции.';
-
-    await ctx.reply(txt, Markup.inlineKeyboard([
-      [Markup.button.callback('⭐ Starter', 'grp_order_starter_'+ctx.chat.id),
-       Markup.button.callback('🚀 Pro',     'grp_order_pro_'+ctx.chat.id)],
-      [Markup.button.callback('💎 Premium', 'grp_order_premium_'+ctx.chat.id)]
-    ]));
-  });
-
-  // Guruh tarif buyurtmasi
-  bot.action(/^grp_order_(starter|pro|premium)_(-?\d+)$/, async (ctx) => {
-    await ctx.answerCbQuery();
-    var selPlan = ctx.match[1];
-    var chatId  = ctx.match[2];
-    var uid     = String(ctx.from.id);
-    var l       = botConfig.language || 'uz';
-
-    // Pending bormi
-    var pending = await GroupSubscription.findOne({ chatId, status: 'pending' });
-    if (pending) {
-      return ctx.reply(
-        l==='uz' ? '⏳ Bu guruh uchun kutilayotgan tolov bor. ID: ' + pending.uniqueId
-        : l==='en' ? '⏳ Pending payment exists. ID: ' + pending.uniqueId
-        : '⏳ Есть ожидающий платёж. ID: ' + pending.uniqueId
-      );
-    }
-
-    // UniqueId yaratish
-    var prefix = 'G' + selPlan.toUpperCase().slice(0,3);
-    var chars  = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ';
-    var uid2   = prefix + '-';
-    for (var i = 0; i < 4; i++) uid2 += chars[Math.floor(Math.random() * chars.length)];
-
-    var price    = GROUP_PLAN_PRICES[selPlan].discounted;
-    var planName = PLAN_NAMES[selPlan];
-    var gCfg     = await GroupConfig.findOne({ chatId, botId: botConfig._id });
-    var chatTitle = gCfg ? gCfg.chatTitle : chatId;
-
-    await GroupSubscription.create({
-      chatId, chatTitle,
-      botId:          botConfig._id,
-      payerUserId:    uid,
-      payerUsername:  ctx.from.username  || '',
-      payerFirstName: ctx.from.first_name || '',
-      plan:           selPlan,
-      uniqueId:       uid2,
-      price,
-      status:         'pending'
-    });
-
-    // Admin ga xabar
-    try {
-      var cardNum = process.env.CARD_NUMBER || "Admin dan so'rang";
-      await bot.telegram.sendMessage(
-        process.env.SUPER_ADMIN_ID,
-        '🏢 Guruh obuna sorovi!\n\nGuruh: ' + esc(chatTitle) + ' (' + chatId + ')\n' +
-        'Tolovchi: ' + (ctx.from.first_name||'') + (ctx.from.username?' (@'+ctx.from.username+')':'') +
-        '\nTarif: ' + planName + '\nID: ' + uid2 + '\nNarx: ' + price + ' som/oy\n\nTasdiqlash: /gactivate ' + uid2,
-        { reply_markup: Markup.inlineKeyboard([[
-          Markup.button.callback('✅ Tasdiqlash — ' + uid2, 'gadm_activate_' + uid2)
-        ]]).reply_markup }
-      );
-    } catch(e) { console.error('[Group] Admin xabar xato:', e.message); }
-
-    var orderMsg = '✅ Buyurtma yaratildi!\n\nID: ' + uid2 + '\nTarif: ' + planName + '\nNarx: ' + price + ' som/oy\n\n💳 Karta: ' + cardNum + '\n\nTolovdan keyin admin tasdiqlaydi.';
-    await ctx.reply(orderMsg, { reply_to_message_id: ctx.callbackQuery.message.message_id });
-  });
-
-  // Admin: guruh obunani tasdiqlash
-  bot.action(/^gadm_activate_(.+)$/, async (ctx) => {
-    if (String(ctx.from.id) !== String(process.env.SUPER_ADMIN_ID)) return ctx.answerCbQuery('Faqat admin!');
-    await ctx.answerCbQuery('Tasdiqlanmoqda...');
-    var uniqueId = ctx.match[1];
-    var sub = await GroupSubscription.findOne({ uniqueId });
-    if (!sub) return ctx.editMessageText('Buyurtma topilmadi: ' + uniqueId);
-
-    var now    = new Date();
-    var expiry = new Date(now);
-    expiry.setMonth(expiry.getMonth() + (sub.durationMonths || 1));
-
-    await GroupSubscription.findByIdAndUpdate(sub._id, {
-      $set: { status: 'active', activatedAt: now, expiresAt: expiry, graceEndsAt: new Date(expiry.getTime() + 3*24*60*60*1000) }
-    });
-    await GroupConfig.findOneAndUpdate(
-      { chatId: sub.chatId, botId: sub.botId },
-      { $set: { currentPlan: sub.plan } }
-    );
-
-    await ctx.editMessageText('✅ Tasdiqlandi! Guruh: ' + sub.chatTitle + ' → ' + PLAN_NAMES[sub.plan]);
-
-    // Guruhga xabar
-    try {
-      await bot.telegram.sendMessage(sub.chatId, '✅ Obuna faollashtirildi! Tarif: ' + PLAN_NAMES[sub.plan]);
-    } catch(e) {}
-  });
-
-  // ═══════════════════════════════════════════════
-  // /adduser va /removeuser — whitelist boshqaruvi
-  // ═══════════════════════════════════════════════
-  bot.command('adduser', async (ctx) => {
-    var uid = String(ctx.from.id);
-    if (uid !== String(botConfig.ownerTelegramId)) return ctx.reply('Bu buyruq faqat egasi uchun.');
-    var args = ctx.message.text.split(' ').slice(1);
-    var target = (args[0]||'').trim();
-    if (!target) return ctx.reply('Foydalanish: /adduser <telegram_id>\nMisol: /adduser 123456789');
-    if (botConfig.allowedUsers.includes(target)) return ctx.reply('Bu foydalanuvchi allaqachon ro\'yxatda.');
-    await UserBot.findByIdAndUpdate(botConfig._id,{$addToSet:{allowedUsers:target}});
-    botConfig.allowedUsers.push(target);
-    ctx.reply('✅ Foydalanuvchi '+target+' qo\'shildi.');
-  });
-
-  bot.command('removeuser', async (ctx) => {
-    var uid = String(ctx.from.id);
-    if (uid !== String(botConfig.ownerTelegramId)) return ctx.reply('Bu buyruq faqat egasi uchun.');
-    var args = ctx.message.text.split(' ').slice(1);
-    var target = (args[0]||'').trim();
-    if (!target) return ctx.reply('Foydalanish: /removeuser <telegram_id>\nMisol: /removeuser 123456789');
-    if (!botConfig.allowedUsers.includes(target)) return ctx.reply('Bu foydalanuvchi ro\'yxatda yo\'q.');
-    await UserBot.findByIdAndUpdate(botConfig._id,{$pull:{allowedUsers:target}});
-    botConfig.allowedUsers = botConfig.allowedUsers.filter(function(u){return u!==target;});
-    ctx.reply('✅ Foydalanuvchi '+target+' o\'chirildi.');
-  });
-
-  bot.command('users', async (ctx) => {
-    var uid = String(ctx.from.id);
-    if (uid !== String(botConfig.ownerTelegramId)) return ctx.reply('Bu buyruq faqat egasi uchun.');
-    var mode = botConfig.accessMode || 'private';
-    var modeText = {private:'🔒 Shaxsiy',whitelist:'👥 Whitelist',open:'🌐 Ochiq'}[mode]||mode;
-    var users = (botConfig.allowedUsers||[]).filter(function(u){return u!==uid;});
-    var text = '👥 Foydalanuvchilar\n\n🔐 Rejim: '+modeText+'\n📋 Ruxsatlı: '+users.length+' ta\n\n';
-    if (users.length) text += users.map(function(u,i){return (i+1)+'. '+u;}).join('\n');
-    else text += 'Hali hech kim qo\'shilmagan.';
-    text += '\n\n➕ Qo\'shish: /adduser <id>\n➖ O\'chirish: /removeuser <id>';
-    ctx.reply(text);
-  });
-
-
-
   bot.on('text', async (ctx) => {
-    // Guruh xabarlari alohida handler da — faqat private
-    if (ctx.chat && ctx.chat.type !== 'private') return;
     var text=ctx.message.text; var uid=String(ctx.from.id);
     if (!text||text.startsWith('/')) return;
     if (MENU_ITEMS_ALL.indexOf(text)!==-1) return;
@@ -2226,19 +1853,10 @@ async function launchUserBot(botConfig) {
         Markup.inlineKeyboard([[Markup.button.callback("🧠 Modellarimni ko'rish",'show_personas')]]) );
     }
 
-    // RUXSAT — accessMode bo'yicha
-    var isOwn      = uid === String(botConfig.ownerTelegramId);
-    var accessMode = botConfig.accessMode || 'private';
-
-    if (!isOwn) {
-      if (accessMode === 'private') {
-        return ctx.reply('🔒 Bu shaxsiy bot. Faqat egasi foydalana oladi.');
-      } else if (accessMode === 'whitelist') {
-        if (!botConfig.allowedUsers.includes(uid)) {
-          return ctx.reply('🔒 Ruxsat yo\'q. Bot egasi sizga ruxsat berishi kerak.');
-        }
-      }
-      // open — hamma kiradi
+    // RUXSAT
+    var isOwn=uid===String(botConfig.ownerTelegramId);
+    if (!isOwn&&!botConfig.allowedUsers.includes(uid)) {
+      return ctx.reply("Bu bot band.\n"+esc(botConfig.ownerName||'Bot egasi')+" bilan bog'laning.");
     }
 
     // NUDGE — sessiyasiz birinchi xabarda bir marta ko'rsatiladi
@@ -2248,15 +1866,10 @@ async function launchUserBot(botConfig) {
       // Nudge yuborildi, lekin AI javob ham davom etadi
     }
 
-    // AI LIMIT — private/whitelist: egasining limiti; open: cheksiz
-    await getFreshConfig();
-    var accessModeNow = botConfig.accessMode || 'private';
-    if (isOwn || accessModeNow === 'whitelist') {
-      var aiChk = await checkAILimit(botConfig, lang(ctx));
-      if (!aiChk.allowed) {
-        return ctx.reply(aiChk.msg, aiChk.keyboard || {});
-      }
-    }
+        // AI LIMIT — har user uchun o'z profili orqali tekshiriladi
+    var userProfile = await getUserProfile(uid);
+    var aiChk = await checkAILimit(userProfile, lang(ctx));
+    if (!aiChk.allowed) return ctx.reply(aiChk.msg, aiChk.keyboard||{});
 
     // FIX #6: typingInterval — try/catch tashqarisida var e'lon
     var typingInterval=null;
@@ -2306,12 +1919,10 @@ async function launchUserBot(botConfig) {
         h4.messages=newMsgs; h4.updatedAt=new Date(); await h4.save();
       }
 
-      if (isOwn) {
-        await UserBot.findByIdAndUpdate(botConfig._id,{$inc:{totalMessages:1,monthlyMessages:1}});
-        botConfig.monthlyMessages=(botConfig.monthlyMessages||0)+1;
-      } else {
-        await UserBot.findByIdAndUpdate(botConfig._id,{$inc:{totalMessages:1}});
-      }
+      // Har user uchun counter yangilanadi
+      await UserProfile.findByIdAndUpdate(userProfile._id, {$inc:{totalMessages:1, monthlyMessages:1}});
+      // Bot umumiy counter
+      await UserBot.findByIdAndUpdate(botConfig._id, {$inc:{totalMessages:1}});
 
       // Uzun javobni bo'lib yuborish (Telegram 4096 belgi chegarasi)
       await sendLongMessage(ctx, aiReply, useHTML);
@@ -2325,14 +1936,13 @@ async function launchUserBot(botConfig) {
 
   // ── SUHBAT YARATISH — launchUserBot ICHIDA ──
   async function createSession(ctx, title) {
-    var uid=String(ctx.from.id); var isOwn=uid===String(botConfig.ownerTelegramId);
-    if (isOwn) {
-      await getFreshConfig();
-      var chk=await checkSessionLimit(botConfig,lang(ctx));
-      if (!chk.allowed) return ctx.reply(chk.msg,chk.keyboard||{});
-      await UserBot.findByIdAndUpdate(botConfig._id,{$inc:{monthlySessions:1}});
-      botConfig.monthlySessions=(botConfig.monthlySessions||0)+1;
-    }
+    var uid = String(ctx.from.id);
+    var isOwn = uid === String(botConfig.ownerTelegramId);
+    var profile = await getUserProfile(uid);
+    var chk = await checkSessionLimit(profile, lang(ctx));
+    if (!chk.allowed) return ctx.reply(chk.msg, chk.keyboard||{});
+    await UserProfile.findByIdAndUpdate(profile._id, {$inc:{monthlySessions:1}});
+    profile.monthlySessions = (profile.monthlySessions||0)+1;
     var sess=await ChatSession.create({botId:botConfig._id,userTelegramId:uid,title,messages:[]});
     ctx.session=ctx.session||{}; ctx.session.activeSessionId=String(sess._id);
     var l=lang(ctx);
@@ -2352,8 +1962,6 @@ async function launchUserBot(botConfig) {
   });
 
   console.log('✅ @'+botConfig.botUsername+' boti ishga tushdi');
-
-
   return bot;
 }
 

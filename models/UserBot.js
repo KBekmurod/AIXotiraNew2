@@ -25,16 +25,6 @@ const userBotSchema = new mongoose.Schema({
   // ── FOYDALANUVCHILAR ──
   allowedUsers:      [{ type: String }],
   maxUsers:          { type: Number, default: 50 },
-
-  // ── KIRISH REJIMI ──
-  // 'private'   — faqat egasi kiradi
-  // 'whitelist' — egasi qo'shgan odamlar kiradi
-  // 'open'      — hamma kiradi, har birining o'z limiti
-  accessMode:        { type: String, enum: ['private','whitelist','open'], default: 'private' },
-
-  // open rejimda har bir foydalanuvchining oylik hisobi
-  // key: telegramId, val: { ai, ppt, pptPro, sessions, reset }
-  userUsage:         { type: Map, of: Object, default: () => new Map() },
   totalMessages:     { type: Number, default: 0 },
   isActive:          { type: Boolean, default: true },
 
