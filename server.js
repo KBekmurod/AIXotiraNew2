@@ -32,8 +32,8 @@ app.use(function(req, res, next) {
   next();
 });
 
-// ── STATIK FAYLLAR — webapp/ ──
-app.use(express.static(path.join(__dirname, 'webapp')));
+// ── STATIK FAYLLAR — webapp/ (hozircha o'chirilgan) ──
+// app.use(express.static(path.join(__dirname, 'webapp')));
 
 // ── AUTH ──
 app.post('/api/auth/verify', verifyHandler);
@@ -97,7 +97,7 @@ app.post('/api/settings/clear',     clearMemory);
 
 // SPA fallback — barcha noma'lum GET so'rovlar index.html ga
 app.get('*', function(req, res) {
-  res.sendFile(path.join(__dirname, 'webapp', 'index.html'));
+  res.status(404).json({ error: 'Web interface not available' });
 });
 
 // ── ISHGA TUSHIRISH ──
@@ -105,7 +105,7 @@ function start() {
   var PORT = process.env.PORT || 3000;
   app.listen(PORT, function() {
     console.log('[Server] ✅ Express server ishga tushdi: port ' + PORT);
-    console.log('[Server] WebApp URL: ' + (process.env.WEBAPP_URL || 'http://localhost:' + PORT));
+    // console.log('[Server] WebApp URL: disabled');
   });
 }
 

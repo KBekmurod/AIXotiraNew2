@@ -52,6 +52,7 @@ async function main() {
       currentPlan:     'free',
       allowedUsers:    [],
       maxUsers:        50,
+      accessMode:      'private',
       language:        'uz',
       personality:     'friendly',
       topics:          [],

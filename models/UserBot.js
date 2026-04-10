@@ -49,7 +49,6 @@ const userBotSchema = new mongoose.Schema({
   monthlyPptPro:     { type: Number, default: 0 },   // Professional prezentatsiya
   monthlySessions:   { type: Number, default: 0 },   // Suhbat fayllari
   monthlyReset:      { type: String, default: '' },  // 'YYYY-MM' formatda oxirgi reset oyi
-  monthlyVideo:      { type: Number, default: 0 },   // Video generatsiya
 
   createdAt:         { type: Date, default: Date.now }
 });

@@ -7,10 +7,10 @@ const Subscription = require('../models/Subscription');
 // PLAN KONSTANTLARI — bir joyda
 // ─────────────────────────────────────────
 const PLAN_LIMITS = {
-  free:    { ai: 30,   ppt: 2,   pptPro: 0,  sessions: 2,        personas: 0,        video: 1   },
-  starter: { ai: 500,  ppt: 15,  pptPro: 5,  sessions: 20,       personas: 3,        video: 10  },
-  pro:     { ai: 2000, ppt: 50,  pptPro: 20, sessions: 50,       personas: 10,       video: 30  },
-  premium: { ai: 5000, ppt: 100, pptPro: 50, sessions: Infinity, personas: Infinity, video: 100 }
+  free:    { ai: 30,   ppt: 2,   pptPro: 0,  sessions: 2,        personas: 0        },
+  starter: { ai: 500,  ppt: 15,  pptPro: 5,  sessions: 20,       personas: 3        },
+  pro:     { ai: 2000, ppt: 50,  pptPro: 20, sessions: 50,       personas: 10       },
+  premium: { ai: 5000, ppt: 100, pptPro: 50, sessions: Infinity, personas: Infinity }
 };
 
 const PLAN_NAMES = {
@@ -37,7 +37,6 @@ async function resetMonthlyIfNeeded(botDoc) {
         monthlyPpt:       0,
         monthlyPptPro:    0,
         monthlySessions:  0,
-        monthlyVideo:     0,
         monthlyReset:     current
       }
     });

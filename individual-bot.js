@@ -9,9 +9,9 @@ const Subscription  = require('./models/Subscription');
 const { getAIResponse, getPptAIResponse } = require('./utils/ai');
 const { generatePptx }                    = require('./utils/pptx');
 const { buildPptPrompt }                  = require('./utils/pptPrompt');
-const { analyzeImageForVideo, getPlanByMood } = require('./utils/videoAI');
-const { buildVideoFromImage, cleanupFiles }   = require('./utils/videoBuilder');
-const VideoFile = require('./models/VideoFile');
+const GroupConfig       = require('./models/GroupConfig');
+const GroupSubscription = require('./models/GroupSubscription');
+
 const News = require('./models/News');
 const fs   = require('fs');
 const path = require('path');
@@ -24,14 +24,29 @@ function esc(str) {
 }
 
 const PLAN_LIMITS = {
-  free:    { ai: 30,   ppt: 2,   pptPro: 0,  sessions: 2,       personas: 0,        video: 1   },
-  starter: { ai: 500,  ppt: 15,  pptPro: 5,  sessions: 20,      personas: 3,        video: 10  },
-  pro:     { ai: 2000, ppt: 50,  pptPro: 20, sessions: 50,      personas: 10,       video: 30  },
-  premium: { ai: 5000, ppt: 100, pptPro: 50, sessions: Infinity, personas: Infinity, video: 100 }
+  free:    { ai: 30,   ppt: 2,   pptPro: 0,  sessions: 2,       personas: 0        },
+  starter: { ai: 500,  ppt: 15,  pptPro: 5,  sessions: 20,      personas: 3        },
+  pro:     { ai: 2000, ppt: 50,  pptPro: 20, sessions: 50,      personas: 10       },
+  premium: { ai: 5000, ppt: 100, pptPro: 50, sessions: Infinity, personas: Infinity }
 };
 
 const PLAN_NAMES = {
   free: '📦 Free', starter: '⭐ Starter', pro: '🚀 Pro', premium: '💎 Premium'
+};
+
+// Guruh uchun limitlar — faqat xabar soni farqlanadi
+// PPT va Video barcha planlarda mavjud
+const GROUP_PLAN_LIMITS = {
+  free:    { ai: 100       },
+  starter: { ai: 1000      },
+  pro:     { ai: 5000      },
+  premium: { ai: Infinity  }
+};
+
+const GROUP_PLAN_PRICES = {
+  starter: { discounted: '19 000', original: '29 000' },
+  pro:     { discounted: '39 000', original: '59 000' },
+  premium: { discounted: '59 000', original: '99 000' }
 };
 
 const PLAN_PRICES = {
@@ -1415,42 +1430,6 @@ async function launchUserBot(botConfig) {
   bot.on('photo', async (ctx) => {
     var step = ctx.session && ctx.session.step;
 
-    // Video rejimi — rasm qabul qilish
-    if (step === 'video_wait_photo') {
-      var lv = lang(ctx);
-      var fileId   = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-      var fileLink = await ctx.telegram.getFileLink(fileId);
-      var fetch2   = require('node-fetch');
-      var tmpPath  = require('path').join(require('os').tmpdir(), 'vid_img_' + Date.now() + '.jpg');
-      var resp2    = await fetch2(fileLink.href);
-      require('fs').writeFileSync(tmpPath, await resp2.buffer());
-
-      // Caption dan prompt olish
-      var caption = (ctx.message.caption || '').trim();
-      ctx.session.videoImagePath = tmpPath;
-      ctx.session.videoPrompt    = caption;
-      ctx.session.step           = 'video_mood';
-
-      var moodBtn = function(emoji, key, uz, en, ru) {
-        return Markup.button.callback(emoji+' '+(lv==='uz'?uz:lv==='en'?en:ru), 'video_mood_'+key);
-      };
-      await ctx.reply(
-        lv==='uz' ? '📸 Rasm qabul qilindi!\n\nQanday kayfiyatda video yarataylik?'
-        :lv==='en' ? '📸 Photo received!\n\nWhat mood should the video have?'
-        :'📸 Фото получено!\n\nКакое настроение для видео?',
-        Markup.inlineKeyboard([
-          [moodBtn('✨','ai','AI tanlaydi','AI chooses','AI выберет'),
-           moodBtn('🕰','nostalgic','Nostalji','Nostalgic','Ностальгия')],
-          [moodBtn('🎭','dramatic','Dramatik','Dramatic','Драматик'),
-           moodBtn('😊','happy','Baxtli','Happy','Радость')],
-          [moodBtn('🎬','cinema','Kino uslubi','Cinematic','Кино'),
-           moodBtn('🕊','memorial','Xotira','Memorial','Памятный')],
-          [Markup.button.callback('❌ '+(lv==='uz'?'Bekor':lv==='en'?'Cancel':'Отмена'),'zone_close')]
-        ])
-      );
-      return;
-    }
-
     if (step!=='ppt_images') { var lp=lang(ctx); return ctx.reply(lp==='uz'?'Rasmni tavsiflab yozing.':lp==='en'?'Please describe the image in text.':'Опишите изображение текстом.'); }
     var ppt=ctx.session.ppt||{}; var images=ppt.images||[]; var imgMax=ppt.imgMax||4;
     if (images.length>=imgMax) return ctx.reply('Maksimal rasm soni: '+imgMax+' ta.',Markup.inlineKeyboard([[Markup.button.callback('✅ Tayyor','ppt_images_done')]]));
@@ -1599,12 +1578,12 @@ async function launchUserBot(botConfig) {
     var payLink=subscribeLink(selPlan,uniqueId);
     var payText=t('sub_order_text',l,planName,uniqueId);
     await ctx.reply(
-      (l==='uz'?"📋 Quyidagi tugmani bosing — admin chatiga o'ting va to'lov qilganingizni bildiring:":l==='en'?'📋 Press the button below — go to admin chat and confirm your payment:':'📋 Нажмите кнопку ниже — перейдите в чат админа и подтвердите оплату:')+'\n\n"'+payText+'"',
+      (l==='uz'?"📋 Quyidagi tugmani bosing — admin chatiga o'ting va tolov qilganingizni bildiring:":l==='en'?'📋 Press the button below — go to admin chat and confirm your payment:':'📋 Нажмите кнопку ниже — перейдите в чат админа и подтвердите оплату:')+'\n\n"'+payText+'"',
       Markup.inlineKeyboard([[Markup.button.url(t('btn_sub_pay',l),payLink)]])
     );
     try {
       await bot.telegram.sendMessage(process.env.SUPER_ADMIN_ID,
-        "⭐ Yangi obuna so'rovi!\n\nFoydalanuvchi: "+(ctx.from.first_name||'')+(ctx.from.username?' (@'+ctx.from.username+')':'')+'\nTelegram ID: '+uid+'\nTarif: '+planName+'\nID: '+uniqueId+"\nNarx: "+price+" so'm/oy\n\nTasdiqlash: /activate "+uniqueId,
+        "⭐ Yangi obuna so'rovi!\n\nFoydalanuvchi: "+(ctx.from.first_name||'')+(ctx.from.username?' (@'+ctx.from.username+')':'')+'\nTelegram ID: '+uid+'\nTarif: '+planName+'\nID: '+uniqueId+"\nNarx: "+price+" som/oy\n\nTasdiqlash: /activate "+uniqueId,
         {reply_markup:Markup.inlineKeyboard([[Markup.button.callback('✅ Tasdiqlash — '+uniqueId,'adm_activate_'+uniqueId)]]).reply_markup}
       );
     }catch(e){console.error('[Sub] Admin ga xabar xato:',e.message);}
@@ -1819,25 +1798,291 @@ async function launchUserBot(botConfig) {
   // ═══════════════════════════════════════════════
   // 🌐 WEB INTERFEYS — Telegram Mini App
   // ═══════════════════════════════════════════════
-  bot.hears(['🌐 Web interfeys','🌐 Веб-интерфейс','🌐 Web App'], async (ctx) => {
-    var l = lang(ctx);
-    var webUrl = process.env.WEBAPP_URL || '';
-    if (!webUrl) {
-      return ctx.reply(l==='uz'?'Web interfeys hali sozlanmagan.':l==='en'?'Web interface not configured yet.':'Веб-интерфейс ещё не настроен.');
-    }
-    var captionUz = '🌐 Web interfeysni ochish uchun tugmani bosing.\n\nBarcha funksiyalar chiroyli interfeysdа mavjud.\n\n\U0001f4a1 Telefoniga o\'rnatish ham mumkin (PWA).';
-    var captionEn = '🌐 Tap the button to open the Web interface.\n\nAll features in a beautiful UI.\n\n\U0001f4a1 Can be installed as an app (PWA).';
-    var captionRu = '🌐 Нажмите кнопку для открытия веб-интерфейса.\n\nВсе функции в красивом интерфейсе.\n\n\U0001f4a1 Можно установить как приложение (PWA).';
-    var caption = l==='uz' ? captionUz : l==='en' ? captionEn : captionRu;
-    await ctx.reply(caption, {
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '🌐 '+(l==='uz'?'Ochish':l==='en'?'Open':'Открыть'), web_app: { url: webUrl } }
-        ]]
+  ;
+
+
+
+  // ═══════════════════════════════════════════════
+  // 🏢 GURUH VA KANAL HANDLERLARI
+  // ═══════════════════════════════════════════════
+
+  // Bot guruhga qo'shilganda yoki chiqarilganda
+  bot.on('my_chat_member', async (ctx) => {
+    try {
+      var chat   = ctx.chat;
+      var update = ctx.update.my_chat_member;
+      var newSt  = update.new_chat_member.status;
+      var oldSt  = update.old_chat_member.status;
+      var addedBy = String(update.from.id);
+
+      if (chat.type !== 'group' && chat.type !== 'supergroup') return;
+
+      if (['member','administrator'].includes(newSt) && ['left','kicked'].includes(oldSt)) {
+        // Bot guruhga qo'shildi
+        var existing = await GroupConfig.findOne({ chatId: String(chat.id), botId: botConfig._id });
+        if (!existing) {
+          await GroupConfig.create({
+            chatId:        String(chat.id),
+            chatTitle:     chat.title || '',
+            chatType:      chat.type,
+            botId:         botConfig._id,
+            addedByUserId: addedBy,
+            currentPlan:   'free',
+            replyMode:     'mention',
+            isActive:      true
+          });
+        } else {
+          await GroupConfig.findOneAndUpdate(
+            { chatId: String(chat.id), botId: botConfig._id },
+            { $set: { isActive: true, chatTitle: chat.title || '' } }
+          );
+        }
+        // Xush kelibsiz xabari
+        try {
+          var l = botConfig.language || 'uz';
+          await ctx.reply(
+            l==='uz'
+              ? '👋 Salom! Men '+esc(botConfig.botName)+'.\n\nGuruhda ishlash uchun meni mention qiling: @'+botConfig.botUsername+'\n\n📊 Hozirgi tarif: Free (oyiga 100 ta xabar)\n💡 Ko\'proq uchun /groupplan'
+              : l==='en'
+              ? '👋 Hello! I am '+esc(botConfig.botName)+'.\n\nMention me to chat: @'+botConfig.botUsername+'\n\n📊 Current plan: Free (100 messages/month)\n💡 Upgrade: /groupplan'
+              : '👋 Привет! Я '+esc(botConfig.botName)+'.\n\nОбращайтесь ко мне: @'+botConfig.botUsername+'\n\n📊 Тариф: Free (100 сообщений/мес)\n💡 Улучшить: /groupplan'
+          );
+        } catch(_) {}
+      } else if (['left','kicked'].includes(newSt)) {
+        // Bot guruhdan chiqarildi
+        await GroupConfig.findOneAndUpdate(
+          { chatId: String(chat.id), botId: botConfig._id },
+          { $set: { isActive: false } }
+        );
       }
-    });
+    } catch(e) {
+      console.error('[Group] my_chat_member xato:', e.message);
+    }
   });
 
+  // Guruh xabarlari — mention yoki reply bo'lsa javob beradi
+  bot.on('message', async (ctx) => {
+    try {
+      var chatType = ctx.chat && ctx.chat.type;
+      if (chatType !== 'group' && chatType !== 'supergroup') return;
+
+      var text = ctx.message && (ctx.message.text || ctx.message.caption) || '';
+      if (!text.trim()) return;
+
+      var gCfg = await GroupConfig.findOne({ chatId: String(ctx.chat.id), botId: botConfig._id, isActive: true });
+      if (!gCfg) return;
+
+      // Mention yoki reply tekshiruvi
+      var botUsername = botConfig.botUsername || '';
+      var isMentioned = text.includes('@' + botUsername);
+      var isReply     = !!(ctx.message.reply_to_message &&
+                           ctx.message.reply_to_message.from &&
+                           String(ctx.message.reply_to_message.from.id) === String(ctx.botInfo && ctx.botInfo.id));
+
+      var replyMode = gCfg.replyMode || 'mention';
+      var shouldReply = false;
+      if (replyMode === 'mention') shouldReply = isMentioned;
+      else if (replyMode === 'reply')   shouldReply = isReply;
+      else if (replyMode === 'all')     shouldReply = true;
+      if (!shouldReply) return;
+
+      // Oylik reset
+      var now = new Date().toISOString().slice(0, 7);
+      if (gCfg.monthlyReset !== now) {
+        await GroupConfig.findByIdAndUpdate(gCfg._id, {
+          $set: { monthlyMessages: 0, monthlyReset: now }
+        });
+        gCfg.monthlyMessages = 0;
+        gCfg.monthlyReset    = now;
+      }
+
+      // Limit tekshiruvi
+      var gPlan  = gCfg.currentPlan || 'free';
+      var gLimit = GROUP_PLAN_LIMITS[gPlan] ? GROUP_PLAN_LIMITS[gPlan].ai : 100;
+      var gUsed  = gCfg.monthlyMessages || 0;
+
+      if (gLimit !== Infinity && gUsed >= gLimit) {
+        var l = botConfig.language || 'uz';
+        return ctx.reply(
+          l==='uz'
+            ? '⚠️ Guruh limiti tugadi.\n\n'+PLAN_NAMES[gPlan]+' tarifida oyiga '+gLimit+' ta xabar. Tarifni yangilash uchun /groupplan yuboring.'
+            : l==='en'
+            ? '⚠️ Group limit reached.\n\n'+PLAN_NAMES[gPlan]+' plan: '+gLimit+' messages/month. Type /groupplan to upgrade.'
+            : '⚠️ Лимит группы исчерпан.\n\n'+PLAN_NAMES[gPlan]+': '+gLimit+' сообщений/мес. Для улучшения: /groupplan',
+          { reply_to_message_id: ctx.message.message_id }
+        );
+      }
+
+      // Mention matnini tozalash
+      var cleanText = text.replace(new RegExp('@' + botUsername, 'g'), '').trim();
+      if (!cleanText) return;
+
+      // AI ga yuborish
+      await ctx.sendChatAction('typing');
+      var cfg2 = botConfig.toObject ? botConfig.toObject() : Object.assign({}, botConfig);
+
+      // Guruh xotirasini olish (chatId asosida)
+      var gHistKey = 'group_' + ctx.chat.id;
+      var gHist    = await (require('./models/ChatHistory')).findOne({
+        botId: botConfig._id, userTelegramId: gHistKey
+      });
+      var gMsgs = (gHist && gHist.messages) ? gHist.messages.slice(-20) : [];
+
+      var aiResult = await getAIResponse(cfg2, gMsgs, cleanText, ctx.from.first_name || "Do'st");
+      var aiReply  = typeof aiResult === 'object' ? aiResult.text : aiResult;
+      var useHTML  = typeof aiResult === 'object' ? aiResult.html : false;
+
+      // Xotirani saqlash
+      var newGMsgs = gMsgs.concat([
+        { role: 'user', content: cleanText },
+        { role: 'assistant', content: aiReply }
+      ]);
+      if (newGMsgs.length > 40) newGMsgs = newGMsgs.slice(-40);
+
+      var GChatHistory = require('./models/ChatHistory');
+      var gH2 = await GChatHistory.findOne({ botId: botConfig._id, userTelegramId: gHistKey });
+      if (!gH2) gH2 = new GChatHistory({ botId: botConfig._id, userTelegramId: gHistKey, messages: [] });
+      gH2.messages = newGMsgs; gH2.updatedAt = new Date();
+      await gH2.save();
+
+      // Counter
+      await GroupConfig.findByIdAndUpdate(gCfg._id, { $inc: { monthlyMessages: 1 } });
+
+      // Javob yuborish
+      await sendLongMessage(ctx, aiReply, useHTML, { reply_to_message_id: ctx.message.message_id });
+
+    } catch(e) {
+      console.error('[Group] message xato:', e.message);
+    }
+  });
+
+  // /grouplimit — guruh limitini ko'rish
+  bot.command('grouplimit', async (ctx) => {
+    if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return;
+    var gCfg = await GroupConfig.findOne({ chatId: String(ctx.chat.id), botId: botConfig._id });
+    if (!gCfg) return;
+    var l     = botConfig.language || 'uz';
+    var plan  = gCfg.currentPlan || 'free';
+    var lim   = GROUP_PLAN_LIMITS[plan] ? GROUP_PLAN_LIMITS[plan].ai : 100;
+    var used  = gCfg.monthlyMessages || 0;
+    var pct   = lim === Infinity ? 0 : Math.round((used / lim) * 100);
+    var bar   = '█'.repeat(Math.floor(pct/10)) + '░'.repeat(10 - Math.floor(pct/10));
+    ctx.reply(
+      l==='uz'
+        ? '📊 Guruh limiti\n\n'+bar+' '+pct+'%\n'+used+' / '+(lim===Infinity?'∞':lim)+' xabar\n\nTarif: '+PLAN_NAMES[plan]+'\n💡 Yangilash: /groupplan'
+        : l==='en'
+        ? '📊 Group usage\n\n'+bar+' '+pct+'%\n'+used+' / '+(lim===Infinity?'∞':lim)+' messages\n\nPlan: '+PLAN_NAMES[plan]+'\n💡 Upgrade: /groupplan'
+        : '📊 Лимит группы\n\n'+bar+' '+pct+'%\n'+used+' / '+(lim===Infinity?'∞':lim)+' сообщений\n\nТариф: '+PLAN_NAMES[plan]+'\n💡 Улучшить: /groupplan',
+      { reply_to_message_id: ctx.message.message_id }
+    );
+  });
+
+  // /groupplan — guruh tarifini ko'rish va yangilash
+  bot.command('groupplan', async (ctx) => {
+    if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return;
+    var gCfg = await GroupConfig.findOne({ chatId: String(ctx.chat.id), botId: botConfig._id });
+    if (!gCfg) return;
+    var l    = botConfig.language || 'uz';
+    var plan = gCfg.currentPlan || 'free';
+    var txt  = l==='uz'
+      ? '💳 Guruh tarifi: '+PLAN_NAMES[plan]+'\n\n⭐ Starter — 19,000/oy (1,000 xabar)\n🚀 Pro — 39,000/oy (5,000 xabar)\n💎 Premium — 59,000/oy (cheksiz)\n\nBarcha tarifda PPT va boshqa funksiyalar mavjud.'
+      : l==='en'
+      ? '💳 Group plan: '+PLAN_NAMES[plan]+'\n\n⭐ Starter — 19,000/mo (1,000 msgs)\n🚀 Pro — 39,000/mo (5,000 msgs)\n💎 Premium — 59,000/mo (unlimited)\n\nAll plans include PPT and other features.'
+      : '💳 Тариф группы: '+PLAN_NAMES[plan]+'\n\n⭐ Starter — 19,000/мес (1,000 сообщ)\n🚀 Pro — 39,000/мес (5,000 сообщ)\n💎 Premium — 59,000/мес (безлимит)\n\nВо всех тарифах доступны PPT и другие функции.';
+
+    await ctx.reply(txt, Markup.inlineKeyboard([
+      [Markup.button.callback('⭐ Starter', 'grp_order_starter_'+ctx.chat.id),
+       Markup.button.callback('🚀 Pro',     'grp_order_pro_'+ctx.chat.id)],
+      [Markup.button.callback('💎 Premium', 'grp_order_premium_'+ctx.chat.id)]
+    ]));
+  });
+
+  // Guruh tarif buyurtmasi
+  bot.action(/^grp_order_(starter|pro|premium)_(-?\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    var selPlan = ctx.match[1];
+    var chatId  = ctx.match[2];
+    var uid     = String(ctx.from.id);
+    var l       = botConfig.language || 'uz';
+
+    // Pending bormi
+    var pending = await GroupSubscription.findOne({ chatId, status: 'pending' });
+    if (pending) {
+      return ctx.reply(
+        l==='uz' ? '⏳ Bu guruh uchun kutilayotgan tolov bor. ID: ' + pending.uniqueId
+        : l==='en' ? '⏳ Pending payment exists. ID: ' + pending.uniqueId
+        : '⏳ Есть ожидающий платёж. ID: ' + pending.uniqueId
+      );
+    }
+
+    // UniqueId yaratish
+    var prefix = 'G' + selPlan.toUpperCase().slice(0,3);
+    var chars  = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+    var uid2   = prefix + '-';
+    for (var i = 0; i < 4; i++) uid2 += chars[Math.floor(Math.random() * chars.length)];
+
+    var price    = GROUP_PLAN_PRICES[selPlan].discounted;
+    var planName = PLAN_NAMES[selPlan];
+    var gCfg     = await GroupConfig.findOne({ chatId, botId: botConfig._id });
+    var chatTitle = gCfg ? gCfg.chatTitle : chatId;
+
+    await GroupSubscription.create({
+      chatId, chatTitle,
+      botId:          botConfig._id,
+      payerUserId:    uid,
+      payerUsername:  ctx.from.username  || '',
+      payerFirstName: ctx.from.first_name || '',
+      plan:           selPlan,
+      uniqueId:       uid2,
+      price,
+      status:         'pending'
+    });
+
+    // Admin ga xabar
+    try {
+      var cardNum = process.env.CARD_NUMBER || "Admin dan so'rang";
+      await bot.telegram.sendMessage(
+        process.env.SUPER_ADMIN_ID,
+        '🏢 Guruh obuna sorovi!\n\nGuruh: ' + esc(chatTitle) + ' (' + chatId + ')\n' +
+        'Tolovchi: ' + (ctx.from.first_name||'') + (ctx.from.username?' (@'+ctx.from.username+')':'') +
+        '\nTarif: ' + planName + '\nID: ' + uid2 + '\nNarx: ' + price + ' som/oy\n\nTasdiqlash: /gactivate ' + uid2,
+        { reply_markup: Markup.inlineKeyboard([[
+          Markup.button.callback('✅ Tasdiqlash — ' + uid2, 'gadm_activate_' + uid2)
+        ]]).reply_markup }
+      );
+    } catch(e) { console.error('[Group] Admin xabar xato:', e.message); }
+
+    var orderMsg = '✅ Buyurtma yaratildi!\n\nID: ' + uid2 + '\nTarif: ' + planName + '\nNarx: ' + price + ' som/oy\n\n💳 Karta: ' + cardNum + '\n\nTolovdan keyin admin tasdiqlaydi.';
+    await ctx.reply(orderMsg, { reply_to_message_id: ctx.callbackQuery.message.message_id });
+  });
+
+  // Admin: guruh obunani tasdiqlash
+  bot.action(/^gadm_activate_(.+)$/, async (ctx) => {
+    if (String(ctx.from.id) !== String(process.env.SUPER_ADMIN_ID)) return ctx.answerCbQuery('Faqat admin!');
+    await ctx.answerCbQuery('Tasdiqlanmoqda...');
+    var uniqueId = ctx.match[1];
+    var sub = await GroupSubscription.findOne({ uniqueId });
+    if (!sub) return ctx.editMessageText('Buyurtma topilmadi: ' + uniqueId);
+
+    var now    = new Date();
+    var expiry = new Date(now);
+    expiry.setMonth(expiry.getMonth() + (sub.durationMonths || 1));
+
+    await GroupSubscription.findByIdAndUpdate(sub._id, {
+      $set: { status: 'active', activatedAt: now, expiresAt: expiry, graceEndsAt: new Date(expiry.getTime() + 3*24*60*60*1000) }
+    });
+    await GroupConfig.findOneAndUpdate(
+      { chatId: sub.chatId, botId: sub.botId },
+      { $set: { currentPlan: sub.plan } }
+    );
+
+    await ctx.editMessageText('✅ Tasdiqlandi! Guruh: ' + sub.chatTitle + ' → ' + PLAN_NAMES[sub.plan]);
+
+    // Guruhga xabar
+    try {
+      await bot.telegram.sendMessage(sub.chatId, '✅ Obuna faollashtirildi! Tarif: ' + PLAN_NAMES[sub.plan]);
+    } catch(e) {}
+  });
 
   // ═══════════════════════════════════════════════
   // /adduser va /removeuser — whitelist boshqaruvi
@@ -1880,69 +2125,10 @@ async function launchUserBot(botConfig) {
   });
 
 
-  // ═══════════════════════════════════════════════
-  // 🎬 VIDEO YARATISH — Rasm → AI tahlil → Effektli video
-  // ═══════════════════════════════════════════════
-  bot.hears(['🎬 Video','🎬 Видео','🎬 Video'], async (ctx) => {
-    await notifySessionSavedIfNeeded(ctx);
-    var uid  = String(ctx.from.id);
-    var l    = lang(ctx);
-    var fresh = await getFreshConfig();
-    var plan  = fresh.currentPlan || 'free';
-    var lim   = PLAN_LIMITS[plan].video || 1;
-    var used  = fresh.monthlyVideo || 0;
 
-    if (used >= lim) {
-      return ctx.reply(
-        l==='uz' ? '🎬 Video limiti tugadi.\n\n'+PLAN_NAMES[plan]+' tarifida oyiga '+lim+' ta video. Obunani yangilang.'
-        :l==='en' ? '🎬 Video limit reached.\n\n'+PLAN_NAMES[plan]+' allows '+lim+' videos/month. Upgrade your plan.'
-        :'🎬 Лимит видео исчерпан.\n\n'+PLAN_NAMES[plan]+' — '+lim+' видео/мес. Обновите подписку.',
-        Markup.inlineKeyboard([[Markup.button.callback(t('btn_subscribe',l),'sub_show_plans')]])
-      );
-    }
-
-    ctx.session = ctx.session || {};
-    ctx.session.step = 'video_wait_photo';
-    ctx.session.videoPrompt = '';
-
-    await ctx.reply(
-      l==='uz' ? '🎬 Video yaratish\n\n📸 Rasm yuboring — AI uni tahlil qilib chiroyli video yaratadi!\n\n💡 Ixtiyoriy: Rasm bilan birga kayfiyat ham yozishingiz mumkin:\n"nostalji", "dramatik", "baxtli", "kino"'
-      :l==='en' ? '🎬 Create Video\n\n📸 Send a photo — AI will analyze it and create a beautiful video!\n\n💡 Optional: You can also write a mood with the photo:\n"nostalgic", "dramatic", "happy", "cinematic"'
-      :'🎬 Создание видео\n\n📸 Отправьте фото — AI проанализирует его и создаст красивое видео!\n\n💡 Можно также написать настроение:\n"ностальгия", "драматик", "радость", "кино"',
-      Markup.inlineKeyboard([
-        [Markup.button.callback('❌ '+(l==='uz'?'Bekor':l==='en'?'Cancel':'Отмена'),'zone_close')]
-      ])
-    );
-  });
-
-  // Video mood tanlash (inline)
-  bot.action(/^video_mood_(nostalgic|dramatic|happy|cinema|memorial|ai)$/, async (ctx) => {
-    await ctx.answerCbQuery();
-    var mood = ctx.match[1];
-    var l    = lang(ctx);
-    var imgPath = ctx.session && ctx.session.videoImagePath;
-    if (!imgPath) return ctx.editMessageText(l==='uz'?'Rasm topilmadi. Qaytadan bosing.':l==='en'?'Image not found. Try again.':'Изображение не найдено.');
-
-    ctx.session.videoMood = mood;
-    await ctx.editMessageText(
-      l==='uz' ? '⏳ Video tayyorlanmoqda...\n\n🔍 AI rasmni tahlil qilyapti\n🎨 Effektlar tanlanmoqda\n🎬 Video yaratilmoqda\n\n(15-30 soniya)'
-      :l==='en' ? '⏳ Creating video...\n\n🔍 AI analyzing image\n🎨 Selecting effects\n🎬 Generating video\n\n(15-30 seconds)'
-      :'⏳ Создаём видео...\n\n🔍 AI анализирует фото\n🎨 Подбираем эффекты\n🎬 Генерируем видео\n\n(15-30 секунд)'
-    );
-
-    setImmediate(function() {
-      buildAndSendVideo(ctx, imgPath, mood, ctx.session.videoPrompt || '');
-    });
-  });
-
-  bot.on('voice',(ctx)=>{ var l=lang(ctx); return ctx.reply(l==='uz'?"Ovozni matnga o'girib yozing!":l==='en'?'Please type instead.':'Напишите текстом.'); });
-  bot.on('document',(ctx)=>{ var l=lang(ctx); return ctx.reply(l==='uz'?'Fayl mazmunini yozib yuboring.':l==='en'?'Describe the document in text.':'Опишите файл текстом.'); });
-  bot.on('sticker',(ctx)=>ctx.reply('😊'));
-
-  // ═══════════════════════════════════════════════
-  // MATN HANDLERI — ASOSIY
-  // ═══════════════════════════════════════════════
   bot.on('text', async (ctx) => {
+    // Guruh xabarlari alohida handler da — faqat private
+    if (ctx.chat && ctx.chat.type !== 'private') return;
     var text=ctx.message.text; var uid=String(ctx.from.id);
     if (!text||text.startsWith('/')) return;
     if (MENU_ITEMS_ALL.indexOf(text)!==-1) return;
@@ -2062,11 +2248,14 @@ async function launchUserBot(botConfig) {
       // Nudge yuborildi, lekin AI javob ham davom etadi
     }
 
-    // AI LIMIT — barcha foydalanuvchilar uchun
+    // AI LIMIT — private/whitelist: egasining limiti; open: cheksiz
     await getFreshConfig();
-    var aiChk = await checkAILimit(botConfig, lang(ctx));
-    if (!aiChk.allowed) {
-      return ctx.reply(aiChk.msg, aiChk.keyboard || {});
+    var accessModeNow = botConfig.accessMode || 'private';
+    if (isOwn || accessModeNow === 'whitelist') {
+      var aiChk = await checkAILimit(botConfig, lang(ctx));
+      if (!aiChk.allowed) {
+        return ctx.reply(aiChk.msg, aiChk.keyboard || {});
+      }
     }
 
     // FIX #6: typingInterval — try/catch tashqarisida var e'lon
@@ -2164,76 +2353,6 @@ async function launchUserBot(botConfig) {
 
   console.log('✅ @'+botConfig.botUsername+' boti ishga tushdi');
 
-  // ═══════════════════════════════════════════════
-  // buildAndSendVideo — video yaratib Telegram ga yuborish
-  // ═══════════════════════════════════════════════
-  async function buildAndSendVideo(ctx, imgPath, mood, userPrompt) {
-    var uid       = String(ctx.from.id);
-    var l         = lang(ctx);
-    var videoPath = null;
-    try {
-      // AI tahlil
-      var planResult;
-      if (mood === 'ai') {
-        planResult = await analyzeImageForVideo(imgPath, userPrompt || '', l);
-      } else {
-        planResult = { ok: true, plan: getPlanByMood(mood) };
-      }
-      var plan = (planResult.ok && planResult.plan) ? planResult.plan : getPlanByMood('warm');
-
-      // Matn overlay
-      if (userPrompt && !plan.text && userPrompt.length < 50) {
-        var moodWords = /nostalji|dramatik|baxtli|kino|nostalgic|dramatic|happy|cinema|memorial/i;
-        if (!moodWords.test(userPrompt)) plan.text = userPrompt;
-      }
-
-      // Video yaratish
-      var result = await buildVideoFromImage(imgPath, plan);
-      videoPath  = result.path;
-
-      // Caption
-      var styleNames = {
-        nostalgic:'Nostaljik', dramatic:'Dramatik', warm:'Iliq', cool:'Sovuq',
-        cinema:'Kino', happy:'Baxtli', memorial:'Xotira'
-      };
-      var sname = styleNames[plan.style] || plan.style;
-      var caption = '🎬 Video tayyor!\n\n🎨 Uslub: '+sname+'\n⏱ '+plan.duration+' soniya';
-      var srcNames = { gemini:'🔍 Gemini Vision', deepseek_r1:'🧠 DeepSeek R1', wisgate:'🧠 AI', groq:'🧠 AI', 'default':'💡 Standart effekt' };
-      if (planResult.source) caption += '\n' + (srcNames[planResult.source] || '🧠 AI');
-
-      await ctx.replyWithVideo({ source: videoPath }, { caption: caption });
-
-      // DB saqlash
-      try {
-        await VideoFile.create({
-          botId: botConfig._id, userTelegramId: uid,
-          style: plan.style, mood: plan.mood||mood,
-          duration: plan.duration, effects: plan.effects||[], textOverlay: plan.text||''
-        });
-      } catch(e2) { console.warn('[Video] DB:', e2.message); }
-
-      // Counter
-      await UserBot.findByIdAndUpdate(botConfig._id, { $inc: { monthlyVideo: 1 } });
-
-    } catch(e) {
-      console.error('[buildAndSendVideo]', e.message);
-      await ctx.reply(
-        l==='uz' ? '❌ Video yaratishda xato.\n\nQayta urining yoki boshqa rasm yuboring.'
-        :l==='en' ? '❌ Failed to create video. Try again or send another image.'
-        :'❌ Ошибка при создании видео. Попробуйте снова.'
-      );
-    } finally {
-      cleanupFiles([imgPath, videoPath].filter(Boolean));
-      if (ctx.session) {
-        ctx.session.step = null;
-        ctx.session.videoImagePath = null;
-        ctx.session.videoPrompt    = null;
-        ctx.session.videoMood      = null;
-      }
-    }
-  }
 
   return bot;
 }
-
-module.exports = { launchUserBot };

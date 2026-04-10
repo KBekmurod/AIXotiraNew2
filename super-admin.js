@@ -3,7 +3,9 @@
 const { Telegraf, session, Markup } = require('telegraf');
 const UserBot      = require('./models/UserBot');
 const ChatHistory  = require('./models/ChatHistory');
-const Subscription = require('./models/Subscription');
+const Subscription       = require('./models/Subscription');
+const GroupConfig        = require('./models/GroupConfig');
+const GroupSubscription  = require('./models/GroupSubscription');
 const News         = require('./models/News');
 const Broadcast    = require('./models/Broadcast');
 const { launchUserBot } = require('./individual-bot');
@@ -175,6 +177,32 @@ adminBot.action(/^adm_activate_(.+)$/, async function(ctx) {
 // ═══════════════════════════════════════════════
 // ⭐ OBUNALAR
 // ═══════════════════════════════════════════════
+// Guruh obunani tasdiqlash
+adminBot.command('gactivate', async function(ctx) {
+  if (String(ctx.from.id) !== String(process.env.SUPER_ADMIN_ID)) return;
+  var args     = ctx.message.text.split(' ').slice(1);
+  var uniqueId = (args[0] || '').trim();
+  if (!uniqueId) return ctx.reply('Foydalanish: /gactivate <uniqueId>');
+
+  var sub = await GroupSubscription.findOne({ uniqueId });
+  if (!sub) return ctx.reply('Buyurtma topilmadi: ' + uniqueId);
+  if (sub.status === 'active') return ctx.reply('Bu obuna allaqachon faol!');
+
+  var now    = new Date();
+  var expiry = new Date(now);
+  expiry.setMonth(expiry.getMonth() + (sub.durationMonths || 1));
+
+  await GroupSubscription.findByIdAndUpdate(sub._id, {
+    $set: { status: 'active', activatedAt: now, expiresAt: expiry }
+  });
+  await GroupConfig.findOneAndUpdate(
+    { chatId: sub.chatId },
+    { $set: { currentPlan: sub.plan } }
+  );
+
+  ctx.reply('✅ Guruh obuna faollashtirildi!\nGuruh: ' + sub.chatTitle + '\nTarif: ' + sub.plan + '\nMuddati: ' + expiry.toLocaleDateString('ru-RU'));
+});
+
 adminBot.hears('⭐ Obunalar', async function(ctx) {
   ctx.session = {};
   await showSubsMenu(ctx, false);

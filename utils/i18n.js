@@ -563,16 +563,7 @@ const T = {
     ru: '🤖 Настройки бота',
     en: '🤖 Bot settings'
   },
-  btn_webapp: {
-    uz: '🌐 Web interfeys',
-    ru: '🌐 Веб-интерфейс',
-    en: '🌐 Web App'
-  },
-  btn_video: {
-    uz: '🎬 Video',
-    ru: '🎬 Видео',
-    en: '🎬 Video'
-  }
+
 };
 
 // ── ASOSIY FUNKSIYA ──
@@ -601,7 +592,7 @@ function mainKeyboard(lang, isOwner, hasPrompt) {
       [t('btn_prompt', l),    t('btn_ppt', l)],
       [t('btn_news', l),      t('btn_subscribe', l)],
       [t('btn_files', l),     t('btn_clear', l)],
-      [t('btn_webapp', l), t('btn_video', l)]
+      
     ]).resize();
   }
 
@@ -612,7 +603,7 @@ function mainKeyboard(lang, isOwner, hasPrompt) {
       [t('btn_sessions', l),  t('btn_settings', l)],
       [t('btn_ppt', l),       t('btn_news', l)],
       [t('btn_subscribe', l), t('btn_files', l)],
-      [t('btn_clear', l), t('btn_webapp', l), t('btn_video', l)]
+      [t('btn_clear', l)]
     ]).resize();
   }
 
@@ -621,8 +612,7 @@ function mainKeyboard(lang, isOwner, hasPrompt) {
     [t('btn_chat', l),     t('btn_stats', l)],
     [t('btn_sessions', l), t('btn_ppt', l)],
     [t('btn_files', l),    t('btn_news', l)],
-    [t('btn_clear', l), t('btn_webapp', l)],
-    [t('btn_video', l)]
+    [t('btn_clear', l)],
   ]).resize();
 }
 
