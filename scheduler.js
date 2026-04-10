@@ -9,6 +9,7 @@ const cron         = require('node-cron');
 const Subscription = require('./models/Subscription');
 const UserBot      = require('./models/UserBot');
 const UserProfile  = require('./models/UserProfile');
+const GroupProfile = require('./models/GroupProfile');
 const { t }        = require('./utils/i18n');
 
 var _individualBot = null;
@@ -88,14 +89,21 @@ async function downgradeExpired() {
     var s = expired[i];
     await Subscription.findByIdAndUpdate(s._id, { $set: { status: 'expired' } });
 
-    // UserProfile ni free ga tushirish (har user uchun alohida)
-    if (s.botId) {
+    // GroupProfile yoki UserProfile ni free ga tushirish
+    if (s.groupChatId && s.botId) {
+      // Gruppa obunasi — GroupProfile yangilanadi
+      await GroupProfile.findOneAndUpdate(
+        { botId: s.botId, chatId: s.groupChatId },
+        { $set: { currentPlan: 'free' } }
+      );
+    } else if (s.botId) {
+      // Shaxsiy obuna — UserProfile yangilanadi
       await UserProfile.findOneAndUpdate(
         { botId: s.botId, userTelegramId: String(s.telegramId) },
         { $set: { currentPlan: 'free' } }
       );
     } else {
-      // Backward compat — eski yozuvlar uchun
+      // Backward compat
       await UserBot.findOneAndUpdate(
         { ownerTelegramId: String(s.telegramId), isActive: true },
         { $set: { currentPlan: 'free' } }

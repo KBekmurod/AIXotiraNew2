@@ -622,4 +622,27 @@ function detectLang(telegramLangCode) {
   return 'ru';
 }
 
+// ── GRUPPA XABARLARI ──
+T.group_limit_reached = {
+  uz: '⚠️ Gruppa AI limiti tugadi.\n\nDavom etish uchun shaxsiy botga o\'ting va obuna oling.',
+  ru: '⚠️ Лимит AI группы исчерпан.\n\nДля продолжения перейдите в личный бот и оформите подписку.',
+  en: '⚠️ Group AI limit reached.\n\nTo continue, go to the personal bot and subscribe.'
+};
+T.group_ppt_limit_reached = {
+  uz: '⚠️ Gruppa prezentatsiya limiti tugadi.\n\nShaxsiy botdan obuna oling.',
+  ru: '⚠️ Лимит презентаций группы исчерпан.\n\nОформите подписку в личном боте.',
+  en: '⚠️ Group presentation limit reached.\n\nSubscribe via the personal bot.'
+};
+T.group_added = {
+  uz: '✅ Bot gruppa/kanalga qo\'shildi!\n\n' +
+      '🤖 AI suhbat:\n/ai <savol>\n@bot_username <savol>\nBot javobiga reply\n\n' +
+      '🎨 Prezentatsiya:\n/ppt <mavzu>',
+  ru: '✅ Бот добавлен в группу/канал!\n\n' +
+      '🤖 AI чат:\n/ai <вопрос>\n@bot_username <вопрос>\nОтветьте на сообщение бота\n\n' +
+      '🎨 Презентация:\n/ppt <тема>',
+  en: '✅ Bot added to group/channel!\n\n' +
+      '🤖 AI chat:\n/ai <question>\n@bot_username <question>\nReply to bot message\n\n' +
+      '🎨 Presentation:\n/ppt <topic>'
+};
+
 module.exports = { t, mainKeyboard, detectLang, LANGS: ['uz', 'ru', 'en'] };

@@ -3,6 +3,7 @@
 const { Telegraf, session, Markup } = require('telegraf');
 const UserBot      = require('./models/UserBot');
 const UserProfile  = require('./models/UserProfile');
+const GroupProfile = require('./models/GroupProfile');
 const ChatHistory  = require('./models/ChatHistory');
 const Subscription = require('./models/Subscription');
 const News         = require('./models/News');
@@ -55,6 +56,7 @@ async function showMainMenu(ctx) {
   var activeSubs  = await Subscription.countDocuments({ status: 'active' });
   var graceSubs   = await Subscription.countDocuments({ status: 'grace' });
   var pendingSubs = await Subscription.countDocuments({ status: 'pending' });
+  var groupCount  = await GroupProfile.countDocuments({ isActive: true });
 
   var statusLine = '';
   if (pendingSubs > 0) statusLine = '\n⚠️ ' + pendingSubs + ' ta obuna to\'lovi kutilmoqda!';
@@ -63,13 +65,15 @@ async function showMainMenu(ctx) {
   await ctx.reply(
     '🛡 Admin Panel\n\n' +
     '👥 Foydalanuvchilar: ' + userCount + ' ta\n' +
+    '💬 Gruppalar/Kanallar: ' + groupCount + ' ta\n' +
     '⭐ Faol obunalar: ' + activeSubs + ' ta' +
     statusLine + '\n\n' +
     'Amalni tanlang:',
     Markup.keyboard([
       ['⭐ Obunalar',          '📊 Statistika'],
-      ['📋 Foydalanuvchilar', '🔍 Qidirish'],
-      ['📰 Yangiliklar',       '📢 Xabar yuborish']
+      ['📋 Foydalanuvchilar', '💬 Gruppalar'],
+      ['🔍 Qidirish',          '📰 Yangiliklar'],
+      ['📢 Xabar yuborish']
     ]).resize()
   );
 }
@@ -350,8 +354,29 @@ adminBot.on('text', async function(ctx) {
   var text = ctx.message.text;
   if (!text || text.startsWith('/')) return;
 
-  var mainBtns = ['⭐ Obunalar', '📊 Statistika', '📋 Foydalanuvchilar', '🔍 Qidirish', '📰 Yangiliklar', '📢 Xabar yuborish'];
+  var mainBtns = ['⭐ Obunalar', '📊 Statistika', '📋 Foydalanuvchilar', '💬 Gruppalar', '🔍 Qidirish', '📰 Yangiliklar', '📢 Xabar yuborish'];
   if (mainBtns.indexOf(text) !== -1) return;
+
+  // Gruppa admin qo'shish
+  if (step === 'grp_add_admin') {
+    var adminId = text.trim();
+    if (!/^\d+$/.test(adminId)) {
+      return ctx.reply('❌ Noto\'g\'ri format. Faqat raqam (Telegram ID) kiriting:');
+    }
+    var gId2 = ctx.session.editGroupId;
+    await GroupProfile.findByIdAndUpdate(gId2, {
+      $addToSet: { adminUserIds: adminId }
+    });
+    ctx.session = {};
+    return ctx.reply('✅ Admin qo\'shildi: ' + adminId,
+      Markup.keyboard([
+        ['⭐ Obunalar', '📊 Statistika'],
+        ['📋 Foydalanuvchilar', '💬 Gruppalar'],
+        ['🔍 Qidirish', '📰 Yangiliklar'],
+        ['📢 Xabar yuborish']
+      ]).resize()
+    );
+  }
 
   // Foydalanuvchi qidirish
   if (step === 'search_user') {
@@ -667,6 +692,240 @@ adminBot.action(/^bc_send_do_(.+)$/, async function(ctx) {
   await ctx.reply('✅ Xabar yuborildi!\n\n✅ Muvaffaqiyatli: ' + sent + '\n❌ Xato: ' + failed);
   await showBroadcastList(ctx, false);
 });
+
+// ═══════════════════════════════════════════════
+// 💬 GRUPPALAR VA KANALLAR BOSHQARUVI
+// ═══════════════════════════════════════════════
+const GROUP_PLAN_NAMES = {
+  free: '📦 Free', starter: '⭐ Starter', pro: '🚀 Pro', premium: '💎 Premium'
+};
+
+adminBot.hears('💬 Gruppalar', async function(ctx) {
+  ctx.session = {};
+  await showGroupsList(ctx, false);
+});
+
+async function showGroupsList(ctx, edit) {
+  var botDoc = await UserBot.findOne({ isActive: true });
+  var groups = await GroupProfile.find({ isActive: true }).sort({ createdAt: -1 }).limit(30);
+
+  var header = '💬 Gruppalar va Kanallar\n\n' +
+    'Jami: ' + groups.length + ' ta\n\n' +
+    (groups.length ? 'Birortasini tanlang:' : 'Hali guruh/kanal yo\'q.\n\nBotni biror guruhga qo\'shing.');
+
+  var btns = groups.map(function(g) {
+    var planTag = g.currentPlan === 'free' ? '' : ' ' + (GROUP_PLAN_NAMES[g.currentPlan] || '');
+    var typeTag = g.chatType === 'channel' ? '📢' : '👥';
+    return [Markup.button.callback(
+      typeTag + ' ' + (g.chatTitle || g.chatId).slice(0, 25) + planTag,
+      'grp_view_' + g._id
+    )];
+  });
+
+  btns.push([Markup.button.callback('◀️ Orqaga', 'grp_back_main')]);
+
+  if (edit) await safeEdit(ctx, header, Markup.inlineKeyboard(btns));
+  else       await ctx.reply(header, Markup.inlineKeyboard(btns));
+}
+
+adminBot.action('grp_back_main', async function(ctx) {
+  await ctx.answerCbQuery();
+  await showGroupsList(ctx, true);
+});
+
+adminBot.action(/^grp_view_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var g = await GroupProfile.findById(ctx.match[1]);
+  if (!g) return safeEdit(ctx, 'Topilmadi.');
+
+  var typeStr  = g.chatType === 'channel' ? '📢 Kanal' : '👥 Gruppa';
+  var planStr  = GROUP_PLAN_NAMES[g.currentPlan] || g.currentPlan;
+  var sub      = await Subscription.findOne({ groupChatId: g.chatId, status: { $in: ['active','grace'] } }).sort({ activatedAt: -1 });
+  var subInfo  = sub ? '\n⭐ Obuna: ' + sub.expiresAt.toLocaleDateString('ru-RU') + ' gacha' : '\n❌ Obuna yo\'q';
+
+  var text = typeStr + '\n\n' +
+    '📛 ' + (g.chatTitle || '—') + '\n' +
+    '🆔 ' + g.chatId + '\n' +
+    '📊 Plan: ' + planStr + subInfo + '\n' +
+    '💬 Oy xabarlari: ' + (g.monthlyMessages || 0) + '\n' +
+    '📈 Jami xabarlar: ' + (g.totalMessages || 0) + '\n' +
+    '👑 Adminlar: ' + (g.adminUserIds || []).length + ' ta';
+
+  await safeEdit(ctx, text, Markup.inlineKeyboard([
+    [Markup.button.callback('⭐ Obuna berish',    'grp_sub_' + g._id),
+     Markup.button.callback('📊 Plan o\'zgartir', 'grp_plan_' + g._id)],
+    [Markup.button.callback('👑 Adminlar',        'grp_admins_' + g._id),
+     Markup.button.callback('🔄 Limitni reset',   'grp_reset_' + g._id)],
+    [Markup.button.callback('🗑 O\'chirish',       'grp_del_' + g._id)],
+    [Markup.button.callback('◀️ Ro\'yxat',        'grp_back_list')]
+  ]));
+});
+
+adminBot.action('grp_back_list', async function(ctx) {
+  await ctx.answerCbQuery();
+  await showGroupsList(ctx, true);
+});
+
+// ── Gruppa plan o'zgartirish ──
+adminBot.action(/^grp_plan_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var g = await GroupProfile.findById(ctx.match[1]);
+  if (!g) return safeEdit(ctx, 'Topilmadi.');
+  await safeEdit(ctx,
+    '📊 Plan tanlang\n\nHozir: ' + (GROUP_PLAN_NAMES[g.currentPlan] || g.currentPlan),
+    Markup.inlineKeyboard([
+      [Markup.button.callback('📦 Free',     'grp_setplan_' + g._id + '_free')],
+      [Markup.button.callback('⭐ Starter',  'grp_setplan_' + g._id + '_starter')],
+      [Markup.button.callback('🚀 Pro',      'grp_setplan_' + g._id + '_pro')],
+      [Markup.button.callback('💎 Premium',  'grp_setplan_' + g._id + '_premium')],
+      [Markup.button.callback('◀️ Orqaga',   'grp_view_' + g._id)]
+    ])
+  );
+});
+
+adminBot.action(/^grp_setplan_(.+)_(free|starter|pro|premium)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var gId  = ctx.match[1];
+  var plan = ctx.match[2];
+  await GroupProfile.findByIdAndUpdate(gId, { $set: { currentPlan: plan, updatedAt: new Date() } });
+  await safeEdit(ctx, '✅ Gruppa plani ' + (GROUP_PLAN_NAMES[plan] || plan) + ' ga o\'zgardi!');
+  var g = await GroupProfile.findById(gId);
+  if (g) await showGroupView(ctx, g);
+});
+
+// ── Gruppa obuna berish (to'g'ridan-to'g'ri admin tomonidan) ──
+adminBot.action(/^grp_sub_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var g = await GroupProfile.findById(ctx.match[1]);
+  if (!g) return safeEdit(ctx, 'Topilmadi.');
+  await safeEdit(ctx,
+    '⭐ Gruppa uchun obuna tarifi:\n\n' + (g.chatTitle || g.chatId),
+    Markup.inlineKeyboard([
+      [Markup.button.callback('⭐ Starter — 1 oy', 'grp_subdo_' + g._id + '_starter_1')],
+      [Markup.button.callback('🚀 Pro — 1 oy',     'grp_subdo_' + g._id + '_pro_1')],
+      [Markup.button.callback('💎 Premium — 1 oy', 'grp_subdo_' + g._id + '_premium_1')],
+      [Markup.button.callback('⭐ Starter — 3 oy', 'grp_subdo_' + g._id + '_starter_3')],
+      [Markup.button.callback('🚀 Pro — 3 oy',     'grp_subdo_' + g._id + '_pro_3')],
+      [Markup.button.callback('◀️ Orqaga',         'grp_view_' + g._id)]
+    ])
+  );
+});
+
+adminBot.action(/^grp_subdo_(.+)_(starter|pro|premium)_(\d+)$/, async function(ctx) {
+  await ctx.answerCbQuery('Faollashtirilmoqda...');
+  var gId     = ctx.match[1];
+  var plan    = ctx.match[2];
+  var months  = parseInt(ctx.match[3]) || 1;
+  var g = await GroupProfile.findById(gId);
+  if (!g) return safeEdit(ctx, 'Topilmadi.');
+
+  var now       = new Date();
+  var expiresAt = new Date(now);
+  expiresAt.setMonth(expiresAt.getMonth() + months);
+  var graceEndsAt = new Date(expiresAt);
+  graceEndsAt.setDate(graceEndsAt.getDate() + 3);
+
+  // Subscription yaratish
+  var chars = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  var rnd = ''; for (var i = 0; i < 4; i++) rnd += chars[Math.floor(Math.random()*chars.length)];
+  var uniqueId = plan.toUpperCase() + '-G' + rnd;
+
+  await Subscription.create({
+    telegramId:   String(g.chatId),
+    groupChatId:  String(g.chatId),
+    botId:        g.botId,
+    firstName:    g.chatTitle || 'Gruppa',
+    username:     '',
+    plan,
+    uniqueId,
+    price:        '',
+    durationMonths: months,
+    status:       'active',
+    activatedAt:  now,
+    expiresAt,
+    graceEndsAt,
+    notified7d:   false,
+    notified1d:   false
+  });
+
+  // GroupProfile yangilash
+  await GroupProfile.findByIdAndUpdate(gId, {
+    $set: { currentPlan: plan, updatedAt: new Date() }
+  });
+
+  await safeEdit(ctx,
+    '✅ Gruppa obunasi faollashtirildi!\n\n' +
+    '📛 ' + (g.chatTitle || g.chatId) + '\n' +
+    '⭐ Tarif: ' + (GROUP_PLAN_NAMES[plan] || plan) + '\n' +
+    '📅 Muddat: ' + expiresAt.toLocaleDateString('ru-RU') + ' gacha (' + months + ' oy)'
+  );
+});
+
+// ── Gruppa adminlarini boshqarish ──
+adminBot.action(/^grp_admins_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var g = await GroupProfile.findById(ctx.match[1]);
+  if (!g) return safeEdit(ctx, 'Topilmadi.');
+
+  var admins = g.adminUserIds || [];
+  var text = '👑 Gruppa adminlari\n\n' +
+    (admins.length ? admins.map(function(a, i) { return (i+1) + '. ID: ' + a; }).join('\n') : 'Admin yo\'q') +
+    '\n\nAdmin qo\'shish uchun user Telegram ID sini yuboring.';
+
+  ctx.session = ctx.session || {};
+  ctx.session.step       = 'grp_add_admin';
+  ctx.session.editGroupId = String(g._id);
+
+  await safeEdit(ctx, text, Markup.inlineKeyboard([
+    [Markup.button.callback('◀️ Orqaga', 'grp_view_' + g._id)]
+  ]));
+});
+
+// ── Gruppa limitini reset qilish ──
+adminBot.action(/^grp_reset_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var g = await GroupProfile.findById(ctx.match[1]);
+  if (!g) return safeEdit(ctx, 'Topilmadi.');
+  await GroupProfile.findByIdAndUpdate(g._id, {
+    $set: { monthlyMessages: 0, monthlyPpt: 0, monthlyReset: '', updatedAt: new Date() }
+  });
+  await safeEdit(ctx, '✅ ' + (g.chatTitle || g.chatId) + ' limiti reset qilindi!');
+});
+
+// ── Gruppa o'chirish ──
+adminBot.action(/^grp_del_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var g = await GroupProfile.findById(ctx.match[1]);
+  if (!g) return safeEdit(ctx, 'Topilmadi.');
+  await safeEdit(ctx,
+    '🗑 \"' + (g.chatTitle || g.chatId) + '\"\n\nO\'chirasizmi?',
+    Markup.inlineKeyboard([
+      [Markup.button.callback('✅ Ha', 'grp_del_do_' + g._id),
+       Markup.button.callback('❌ Bekor', 'grp_view_' + g._id)]
+    ])
+  );
+});
+
+adminBot.action(/^grp_del_do_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  await GroupProfile.findByIdAndUpdate(ctx.match[1], { $set: { isActive: false } });
+  await safeEdit(ctx, '🗑 Gruppa o\'chirildi.');
+  await showGroupsList(ctx, true);
+});
+
+// ── Yordamchi: gruppa ko'rinishiga qaytish ──
+async function showGroupView(ctx, g) {
+  var typeStr = g.chatType === 'channel' ? '📢 Kanal' : '👥 Gruppa';
+  var planStr = GROUP_PLAN_NAMES[g.currentPlan] || g.currentPlan;
+  await safeEdit(ctx,
+    typeStr + '\n\n📛 ' + (g.chatTitle || '—') + '\n🆔 ' + g.chatId + '\n📊 Plan: ' + planStr,
+    Markup.inlineKeyboard([
+      [Markup.button.callback('⭐ Obuna berish',    'grp_sub_' + g._id),
+       Markup.button.callback('📊 Plan o\'zgartir', 'grp_plan_' + g._id)],
+      [Markup.button.callback('◀️ Ro\'yxat',        'grp_back_list')]
+    ])
+  );
+}
 
 // ═══════════════════════════════════════════════
 // BOT YUKLASH

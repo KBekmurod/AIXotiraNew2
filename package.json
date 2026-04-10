@@ -1,7 +1,7 @@
 {
   "name": "individual-bot",
-  "version": "2.0.0",
-  "description": "AIxotira — Individual Bot with Subscription System",
+  "version": "3.0.0",
+  "description": "AIxotira — Individual Bot v3 with Group/Channel Support",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

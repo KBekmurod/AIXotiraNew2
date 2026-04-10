@@ -14,8 +14,11 @@ const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
 const { t, mainKeyboard, detectLang } = require('./utils/i18n');
-const PptFile       = require('./models/PptFile');
-const UserProfile   = require('./models/UserProfile');
+const PptFile        = require('./models/PptFile');
+const UserProfile    = require('./models/UserProfile');
+const GroupProfile   = require('./models/GroupProfile');
+const { handleGroupMessage } = require('./utils/groupHandler');
+const { handleGroupPpt }     = require('./utils/groupPptHandler');
 
 function esc(str) {
   return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -1949,6 +1952,75 @@ async function launchUserBot(botConfig) {
     var hp=isOwn&&!!(botConfig.extraInstructions&&botConfig.extraInstructions.trim());
     await ctx.reply(t('session_created',l,title),mainKeyboard(l,isOwn,hp));
   }
+
+  // ═══════════════════════════════════════════════
+  // BOT GRUPPAGA QO'SHILGANDA — Xush kelibsiz xabari
+  // ═══════════════════════════════════════════════
+  bot.on('my_chat_member', async (ctx) => {
+    try {
+      var update = ctx.myChatMember;
+      if (!update) return;
+      var newStatus = update.new_chat_member && update.new_chat_member.status;
+      var chat      = update.chat;
+      if (!chat) return;
+      if (chat.type !== 'group' && chat.type !== 'supergroup' && chat.type !== 'channel') return;
+
+      // Bot qo'shildi
+      if (newStatus === 'member' || newStatus === 'administrator') {
+        var { getOrCreateGroupProfile } = require('./utils/groupHandler');
+        await getOrCreateGroupProfile(botConfig._id, { chat });
+
+        var welcomeText =
+          '✅ Bot gruppa/kanalga qo\'shildi!\n\n' +
+          '🤖 AI suhbat:\n' +
+          '/ai <savol>\n' +
+          '@' + botConfig.botUsername + ' <savol>\n' +
+          'Bot javobiga reply\n\n' +
+          '🎨 Prezentatsiya:\n' +
+          '/ppt <mavzu>';
+
+        try {
+          await bot.telegram.sendMessage(chat.id, welcomeText);
+        } catch(_) {}
+      }
+    } catch(e) {
+      console.error('[GroupJoin] Xato:', e.message);
+    }
+  });
+
+  // ═══════════════════════════════════════════════
+  // GRUPPA VA KANAL HANDLERI
+  // Trigger: /ai, @mention, bot reply
+  // PPT: /ppt <mavzu>
+  // ═══════════════════════════════════════════════
+  bot.on('message', async (ctx) => {
+    var chat = ctx.chat;
+    if (!chat) return;
+
+    // Faqat gruppa/supergroup/channel
+    if (chat.type !== 'group' && chat.type !== 'supergroup' && chat.type !== 'channel') return;
+
+    var text = (ctx.message && (ctx.message.text || ctx.message.caption)) || '';
+    if (!text) return;
+
+    // PPT trigger avval tekshiriladi (/ppt buyrug'i)
+    var lc = text.trim().toLowerCase();
+    if (lc.startsWith('/ppt')) {
+      await handleGroupPpt(ctx, botConfig, botConfig.botUsername);
+      return;
+    }
+    // @mention + ppt
+    if (botConfig.botUsername) {
+      var mentionPptRe = new RegExp('@' + botConfig.botUsername.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\s+ppt', 'i');
+      if (mentionPptRe.test(text)) {
+        await handleGroupPpt(ctx, botConfig, botConfig.botUsername);
+        return;
+      }
+    }
+
+    // AI suhbat handler
+    await handleGroupMessage(ctx, botConfig, botConfig.botUsername);
+  });
 
   bot.launch({dropPendingUpdates:true}).catch(err=>{
     var msg=err.message||'';
