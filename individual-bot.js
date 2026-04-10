@@ -2356,3 +2356,5 @@ async function launchUserBot(botConfig) {
 
   return bot;
 }
+
+module.exports = { launchUserBot };
