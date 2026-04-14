@@ -17,7 +17,7 @@ const { t, mainKeyboard, detectLang } = require('./utils/i18n');
 const PptFile        = require('./models/PptFile');
 const UserProfile    = require('./models/UserProfile');
 const GroupProfile   = require('./models/GroupProfile');
-const { handleGroupMessage } = require('./utils/groupHandler');
+const { handleGroupMessage, getOrCreateGroupProfile } = require('./utils/groupHandler');
 const { handleGroupPpt }     = require('./utils/groupPptHandler');
 
 function esc(str) {
@@ -1504,6 +1504,10 @@ async function launchUserBot(botConfig) {
   bot.action(/^ctx_use_for_wizard_/, async (ctx) => { await ctx.answerCbQuery(); await ctx.editMessageText('Tushunarli ✓  Davom eting!'); });
 
   bot.on('photo', async (ctx) => {
+    // Gruppada rasm — e'tiborsiz qoldirish
+    var chatType2 = ctx.chat && ctx.chat.type;
+    if (chatType2 === 'group' || chatType2 === 'supergroup' || chatType2 === 'channel') return;
+
     var step=ctx.session&&ctx.session.step;
     if (step!=='ppt_images') { var lp=lang(ctx); return ctx.reply(lp==='uz'?'Rasmni tavsiflab yozing.':lp==='en'?'Please describe the image in text.':'Опишите изображение текстом.'); }
     var ppt=ctx.session.ppt||{}; var images=ppt.images||[]; var imgMax=ppt.imgMax||4;
@@ -1896,14 +1900,50 @@ async function launchUserBot(botConfig) {
     return lines.join('\n');
   }
 
-  bot.on('voice',(ctx)=>{ var l=lang(ctx); return ctx.reply(l==='uz'?"Ovozni matnga o\'girib yozing!":l==='en'?'Please type instead.':'Напишите текстом.'); });
-  bot.on('document',(ctx)=>{ var l=lang(ctx); return ctx.reply(l==='uz'?'Fayl mazmunini yozib yuboring.':l==='en'?'Describe the document in text.':'Опишите файл текстом.'); });
-  bot.on('sticker',(ctx)=>ctx.reply('😊'));
+  bot.on('voice',(ctx)=>{
+    var ct=ctx.chat&&ctx.chat.type;
+    if(ct==='group'||ct==='supergroup'||ct==='channel') return;
+    var l=lang(ctx); return ctx.reply(l==='uz'?"Ovozni matnga o\'girib yozing!":l==='en'?'Please type instead.':'Напишите текстом.');
+  });
+  bot.on('document',(ctx)=>{
+    var ct=ctx.chat&&ctx.chat.type;
+    if(ct==='group'||ct==='supergroup'||ct==='channel') return;
+    var l=lang(ctx); return ctx.reply(l==='uz'?'Fayl mazmunini yozib yuboring.':l==='en'?'Describe the document in text.':'Опишите файл текстом.');
+  });
+  bot.on('sticker',(ctx)=>{
+    var ct=ctx.chat&&ctx.chat.type;
+    if(ct==='group'||ct==='supergroup'||ct==='channel') return;
+    ctx.reply('😊');
+  });
 
   // ═══════════════════════════════════════════════
-  // MATN HANDLERI — ASOSIY
+  // MATN HANDLERI — ASOSIY (faqat shaxsiy suhbat)
   // ═══════════════════════════════════════════════
   bot.on('text', async (ctx) => {
+    // ── GRUPPA/KANAL XABARLARI — alohida handler ──
+    var chatType = ctx.chat && ctx.chat.type;
+    if (chatType === 'group' || chatType === 'supergroup' || chatType === 'channel') {
+      var grpText = ctx.message && ctx.message.text;
+      if (!grpText) return;
+      var grpLc = grpText.trim().toLowerCase();
+      // PPT trigger
+      if (grpLc.startsWith('/ppt')) {
+        await handleGroupPpt(ctx, botConfig, botConfig.botUsername);
+        return;
+      }
+      if (botConfig.botUsername) {
+        var mPptRe = new RegExp('@' + botConfig.botUsername.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\s+ppt', 'i');
+        if (mPptRe.test(grpText)) {
+          await handleGroupPpt(ctx, botConfig, botConfig.botUsername);
+          return;
+        }
+      }
+      // AI suhbat trigger
+      await handleGroupMessage(ctx, botConfig, botConfig.botUsername);
+      return;
+    }
+
+    // ── SHAXSIY SUHBAT ──
     var text=ctx.message.text; var uid=String(ctx.from.id);
     if (!text||text.startsWith('/')) return;
     if (MENU_ITEMS_ALL.indexOf(text)!==-1) return;
@@ -2131,7 +2171,6 @@ async function launchUserBot(botConfig) {
 
       // Bot qo\'shildi
       if (newStatus === 'member' || newStatus === 'administrator') {
-        var { getOrCreateGroupProfile } = require('./utils/groupHandler');
         await getOrCreateGroupProfile(botConfig._id, { chat });
 
         var welcomeText =
@@ -2154,37 +2193,11 @@ async function launchUserBot(botConfig) {
 
   // ═══════════════════════════════════════════════
   // GRUPPA VA KANAL HANDLERI
-  // Trigger: /ai, @mention, bot reply
-  // PPT: /ppt <mavzu>
+  // bot.on('text') ichida gruppa xabarlar alohida qayta ishlanadi
+  // Trigger: /ai, @mention, bot reply, /ppt
   // ═══════════════════════════════════════════════
-  bot.on('message', async (ctx) => {
-    var chat = ctx.chat;
-    if (!chat) return;
-
-    // Faqat gruppa/supergroup/channel
-    if (chat.type !== 'group' && chat.type !== 'supergroup' && chat.type !== 'channel') return;
-
-    var text = (ctx.message && (ctx.message.text || ctx.message.caption)) || '';
-    if (!text) return;
-
-    // PPT trigger avval tekshiriladi (/ppt buyrug\'i)
-    var lc = text.trim().toLowerCase();
-    if (lc.startsWith('/ppt')) {
-      await handleGroupPpt(ctx, botConfig, botConfig.botUsername);
-      return;
-    }
-    // @mention + ppt
-    if (botConfig.botUsername) {
-      var mentionPptRe = new RegExp('@' + botConfig.botUsername.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\s+ppt', 'i');
-      if (mentionPptRe.test(text)) {
-        await handleGroupPpt(ctx, botConfig, botConfig.botUsername);
-        return;
-      }
-    }
-
-    // AI suhbat handler
-    await handleGroupMessage(ctx, botConfig, botConfig.botUsername);
-  });
+  // NOTE: Gruppa xabarlari bot.on('text') ning BOSHIDA ushlandi (yuqorida)
+  // Bu handler faqat my_chat_member uchun qoldirildi
 
   bot.launch({dropPendingUpdates:true}).catch(err=>{
     var msg=err.message||'';

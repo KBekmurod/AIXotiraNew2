@@ -374,9 +374,9 @@ adminBot.action(/^usr_view_(.+)$/, async function(ctx) {
 
   var row1 = [Markup.button.callback('⭐ Plan', 'usr_plan_' + uid2), Markup.button.callback('🔄 Reset', 'usr_reset_' + uid2)];
   var row2 = [Markup.button.callback('🗑 Xotira', 'usr_clrmem_' + uid2), Markup.button.callback('✉️ Xabar', 'usr_msg_' + uid2)];
-  var row3 = blk
-    ? [Markup.button.callback('✅ Blokdan chiqar', 'usr_unblock_' + uid2)]
-    : [Markup.button.callback('🚫 Bloklash', 'usr_block_' + uid2)];
+  var row3 = [blk
+    ? Markup.button.callback('✅ Blokdan chiqar', 'usr_unblock_' + uid2)
+    : Markup.button.callback('🚫 Bloklash', 'usr_block_' + uid2)];
   var row4 = [Markup.button.callback('🗑 O\'chirish', 'usr_del_' + uid2), Markup.button.callback('◀️ Ro\'yxat', 'usr_back_list')];
 
   await safeEdit(ctx, txt, Markup.inlineKeyboard([row1, row2, row3, row4]));
@@ -430,7 +430,7 @@ adminBot.action(/^usr_reset_(.+)$/, async function(ctx) {
 });
 
 // ── Xotirani tozalash ──
-adminBot.action(/^usr_clrmem_(.+)$/, async function(ctx) {
+adminBot.action(/^usr_clrmem_(?!do_)(.+)$/, async function(ctx) {
   await ctx.answerCbQuery();
   var uid2 = ctx.match[1];
   await safeEdit(ctx, '🗑 Xotirani tozalash — ' + uid2 + '\n\nBarcha suhbat tarixi o\'chiriladi. Davom etasizmi?',
@@ -483,7 +483,7 @@ adminBot.action(/^usr_unblock_(.+)$/, async function(ctx) {
 });
 
 // ── O\'chirish ──
-adminBot.action(/^usr_del_(.+)$/, async function(ctx) {
+adminBot.action(/^usr_del_(?!do_)(.+)$/, async function(ctx) {
   await ctx.answerCbQuery();
   var uid2 = ctx.match[1];
   await safeEdit(ctx, '🗑 O\'chirish: ' + uid2 + '\n\nBotdan chiqariladi, profil, xotira, sessiyalar o\'chiriladi. Davom etasizmi?',
@@ -962,7 +962,10 @@ adminBot.hears('💬 Gruppalar', async function(ctx) {
 
 async function showGroupsList(ctx, edit) {
   var botDoc = await UserBot.findOne({ isActive: true });
-  var groups = await GroupProfile.find({ isActive: true }).sort({ createdAt: -1 }).limit(30);
+  var groups = await GroupProfile.find({
+    isActive: true,
+    ...(botDoc ? { botId: botDoc._id } : {})
+  }).sort({ createdAt: -1 }).limit(30);
 
   var header = '💬 Gruppalar va Kanallar\n\n' +
     'Jami: ' + groups.length + ' ta\n\n' +
@@ -1049,7 +1052,7 @@ adminBot.action(/^grp_setplan_(.+)_(free|starter|pro|premium)$/, async function(
 });
 
 // ── Gruppa obuna berish (to'g'ridan-to'g'ri admin tomonidan) ──
-adminBot.action(/^grp_sub_(.+)$/, async function(ctx) {
+adminBot.action(/^grp_sub_(?!do_)(.+)$/, async function(ctx) {
   await ctx.answerCbQuery();
   var g = await GroupProfile.findById(ctx.match[1]);
   if (!g) return safeEdit(ctx, 'Topilmadi.');
@@ -1148,7 +1151,7 @@ adminBot.action(/^grp_reset_(.+)$/, async function(ctx) {
 });
 
 // ── Gruppa o\'chirish ──
-adminBot.action(/^grp_del_(.+)$/, async function(ctx) {
+adminBot.action(/^grp_del_(?!do_)(.+)$/, async function(ctx) {
   await ctx.answerCbQuery();
   var g = await GroupProfile.findById(ctx.match[1]);
   if (!g) return safeEdit(ctx, 'Topilmadi.');
