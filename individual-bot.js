@@ -83,7 +83,7 @@ async function launchUserBot(botConfig) {
     return msg;
   }
 
-  // ── Suhbatlar ro'yxatini ko'rsatish — umumiy funksiya ──
+  // ── Suhbatlar ro'yxatini ko\'rsatish — umumiy funksiya ──
   async function showSessionsList(ctx, edit) {
     var uid  = String(ctx.from.id);
     var l    = lang(ctx);
@@ -92,7 +92,7 @@ async function launchUserBot(botConfig) {
 
     var header;
     if (!list.length) {
-      header = l==='uz'?"🗂 Suhbat fayllari yo'q.\n\nYangi suhbat boshlash uchun 💬 Suhbat tugmasini bosing."
+      header = l==='uz'?"🗂 Suhbat fayllari yo\'q.\n\nYangi suhbat boshlash uchun 💬 Suhbat tugmasini bosing."
         :l==='en'?"🗂 No session files.\n\nPress 💬 Chat to start a new chat."
         :"🗂 Файлов бесед нет.\n\nНажмите 💬 Чат чтобы начать.";
       var kb0 = Markup.inlineKeyboard([[Markup.button.callback(t('btn_close',l),'zone_close')]]);
@@ -136,14 +136,14 @@ async function launchUserBot(botConfig) {
     await openZone(ctx, text, extra);
   }
 
-  // ── UZUN XABARNI BO'LIB YUBORISH ──
-  // Telegram 4096 belgi chegarasi. Uzun bo'lsa bo'lib yuboradi.
-  // Oxirgi qismda "Davomini so'rash" eslatmasi qo'shiladi.
+  // ── UZUN XABARNI BO\'LIB YUBORISH ──
+  // Telegram 4096 belgi chegarasi. Uzun bo\'lsa bo\'lib yuboradi.
+  // Oxirgi qismda "Davomini so\'rash" eslatmasi qo\'shiladi.
   async function sendLongMessage(ctx, text, useHTML) {
     var LIMIT = 4000; // 4096 dan biroz kam — xavfsiz chegara
     var lang2 = lang(ctx);
 
-    // Qisqa bo'lsa — to'g'ri yuborish
+    // Qisqa bo\'lsa — to\'g\'ri yuborish
     if (text.length <= LIMIT) {
       if (useHTML) {
         try { await ctx.reply(text, {parse_mode:'HTML'}); }
@@ -154,7 +154,7 @@ async function launchUserBot(botConfig) {
       return;
     }
 
-    // Uzun bo'lsa — paragraf bo'yicha bo'lamiz
+    // Uzun bo\'lsa — paragraf bo\'yicha bo\'lamiz
     var parts = splitByParagraphs(text, LIMIT);
 
     for (var i = 0; i < parts.length; i++) {
@@ -168,7 +168,7 @@ async function launchUserBot(botConfig) {
           : '\n\n⏳ <i>Продолжение следует...</i>';
         if (useHTML) chunk += contNote;
       } else {
-        // Oxirgi qismda davomini so'rash eslatmasi
+        // Oxirgi qismda davomini so\'rash eslatmasi
         var nextNote = lang2==='uz'
           ? '\n\n💬 <i>Davomini ko\'rish uchun "davom" deb yozing.</i>'
           : lang2==='en'
@@ -199,18 +199,18 @@ async function launchUserBot(botConfig) {
     }
   }
 
-  // Matnni paragraf bo'yicha limitga moslash
+  // Matnni paragraf bo\'yicha limitga moslash
   function splitByParagraphs(text, limit) {
     if (text.length <= limit) return [text];
 
     var parts  = [];
     var current = '';
-    // Avval paragrafga bo'lamiz
+    // Avval paragrafga bo\'lamiz
     var paras  = text.split('\n\n');
 
     for (var i = 0; i < paras.length; i++) {
       var para = paras[i];
-      // Bitta paragraf limitdan katta bo'lsa — satr bo'yicha bo'lamiz
+      // Bitta paragraf limitdan katta bo\'lsa — satr bo\'yicha bo\'lamiz
       if (para.length > limit) {
         var lines = para.split('\n');
         for (var j = 0; j < lines.length; j++) {
@@ -237,7 +237,7 @@ async function launchUserBot(botConfig) {
   }
 
     // ── SESSIYA SAQLANDI ESLATMASI ──
-  // Foydalanuvchi boshqa tugmani bosganida bir marta ko'rsatiladi
+  // Foydalanuvchi boshqa tugmani bosganida bir marta ko\'rsatiladi
   async function notifySessionSavedIfNeeded(ctx) {
     ctx.session = ctx.session || {};
     if (ctx.session.activeSessionId && !ctx.session.sessionSavedNotified) {
@@ -267,17 +267,37 @@ async function launchUserBot(botConfig) {
     return botConfig;
   }
 
-  // ── USER PROFILE — har bir foydalanuvchi uchun alohida plan/limit ──
-  async function getUserProfile(uid) {
+  // ── USER PROFILE — har bir foydalanuvchi uchun alohida profil ──
+  async function getUserProfile(uid, ctx) {
     var profile = await UserProfile.findOne({ botId: botConfig._id, userTelegramId: String(uid) });
     if (!profile) {
+      var fName = (ctx && ctx.from && ctx.from.first_name) || '';
+      var uName = (ctx && ctx.from && ctx.from.username)   || '';
       profile = await UserProfile.create({
-        botId: botConfig._id,
-        userTelegramId: String(uid),
-        currentPlan: 'free'
+        botId: botConfig._id, userTelegramId: String(uid),
+        currentPlan: 'free', firstName: fName, telegramUsername: uName, joinedAt: new Date()
       });
+    } else if (ctx && ctx.from) {
+      var nf = ctx.from.first_name || '';
+      var nu = ctx.from.username   || '';
+      if (profile.firstName !== nf || profile.telegramUsername !== nu) {
+        await UserProfile.findByIdAndUpdate(profile._id, { $set: { firstName: nf, telegramUsername: nu, updatedAt: new Date() } });
+        profile.firstName = nf; profile.telegramUsername = nu;
+      }
     }
     return profile;
+  }
+
+  // ── EFFECTIVE CONFIG — userProfile shaxsiy sozlamalarini botConfig ustiga qo\'yish ──
+  function getEffectiveCfg(botCfg, profile) {
+    var cfg = Object.assign({}, botCfg.toObject ? botCfg.toObject() : botCfg);
+    if (profile.customBotName)                        cfg.botName           = profile.customBotName;
+    if (profile.customPersonality)                    cfg.personality       = profile.customPersonality;
+    if (profile.customTopics && profile.customTopics.length) cfg.topics     = profile.customTopics;
+    if (profile.customExtra)                          cfg.extraInstructions = profile.customExtra;
+    if (profile.customUserTitle)                      cfg.userTitle         = profile.customUserTitle;
+    if (profile.customLanguage)                       cfg.language          = profile.customLanguage;
+    return cfg;
   }
 
   // ── USER PROFILE RESET — oylik limitni yangilash ──
@@ -294,7 +314,7 @@ async function launchUserBot(botConfig) {
     return profile;
   }
 
-  // ── LIMIT TEKSHIRUVLARI — har user uchun o'z profili orqali ──
+  // ── LIMIT TEKSHIRUVLARI — har user uchun o\'z profili orqali ──
 
   async function checkAILimit(profile, l) {
     await resetUserMonthlyIfNeeded(profile);
@@ -387,7 +407,7 @@ async function launchUserBot(botConfig) {
   bot.start(async (ctx) => {
     ctx.session = ctx.session || {};
     var userId    = String(ctx.from.id);
-    var firstName = esc(ctx.from.first_name || "Do'st");
+    var firstName = esc(ctx.from.first_name || "Do\'st");
     var isOwner   = userId === String(botConfig.ownerTelegramId);
 
     if (!isOwner) {
@@ -395,7 +415,7 @@ async function launchUserBot(botConfig) {
         if (botConfig.allowedUsers.length >= (botConfig.maxUsers || 50)) {
           var bl = lang(ctx);
           return ctx.reply(
-            bl==='uz' ? 'Bu bot hozir band. 🔒\n\n'+esc(botConfig.ownerName||'Bot egasi')+" bilan bog'laning."
+            bl==='uz' ? 'Bu bot hozir band. 🔒\n\n'+esc(botConfig.ownerName||'Bot egasi')+" bilan bog\'laning."
             :bl==='en' ? 'This bot is currently full. 🔒\n\nContact '+esc(botConfig.ownerName||'the owner')+'.'
             :'Этот бот сейчас заполнен. 🔒\n\nСвяжитесь с '+esc(botConfig.ownerName||'владельцем')+'.'
           );
@@ -416,7 +436,7 @@ async function launchUserBot(botConfig) {
       if (!h0||!h0.messages||!h0.messages.length) {
         await ctx.reply('🌐 Tilni tanlang / Выберите язык / Choose language:',
           Markup.inlineKeyboard([[
-            Markup.button.callback("🇺🇿 O'zbek",'set_lang_ui_uz'),
+            Markup.button.callback("🇺🇿 O\'zbek",'set_lang_ui_uz'),
             Markup.button.callback('🇷🇺 Русский','set_lang_ui_ru'),
             Markup.button.callback('🇬🇧 English','set_lang_ui_en')
           ]])
@@ -426,8 +446,17 @@ async function launchUserBot(botConfig) {
     }
 
     var l        = lang(ctx);
-    var title    = botConfig.userTitle || "do'stim";
-    var hasPrompt = isOwner && !!(botConfig.extraInstructions && botConfig.extraInstructions.trim());
+    var startProf = await getUserProfile(userId, ctx);
+    if (startProf.isBlocked) {
+      return ctx.reply(
+        l==='uz' ? 'Siz bloklangansiz. Bot egasi bilan bog\'laning.'
+        :l==='en' ? 'You have been blocked. Contact the bot owner.'
+        :'Вы заблокированы. Свяжитесь с владельцем бота.'
+      );
+    }
+    var effCfg    = getEffectiveCfg(botConfig, startProf);
+    var title     = effCfg.userTitle || "do\'stim";
+    var hasPrompt = !!(effCfg.extraInstructions && effCfg.extraInstructions.trim());
     var hist     = await ChatHistory.findOne({botId:botConfig._id,userTelegramId:userId});
     var hasHist  = hist && hist.messages && hist.messages.length > 0;
 
@@ -442,19 +471,19 @@ async function launchUserBot(botConfig) {
     }
   });
 
-  // FIX: noyob regex set_lang_ui_ (set_bot_lang_ bilan to'qnashmaydi)
+  // FIX: noyob regex set_lang_ui_ (set_bot_lang_ bilan to\'qnashmaydi)
   bot.action(/^set_lang_ui_(uz|ru|en)$/, async (ctx) => {
     await ctx.answerCbQuery();
     ctx.session = ctx.session || {};
     var ch    = ctx.match[1];
     ctx.session.lang = ch;
     var uid   = String(ctx.from.id);
-    var fname = esc(ctx.from.first_name || "Do'st");
+    var fname = esc(ctx.from.first_name || "Do\'st");
     var isOwn = uid === String(botConfig.ownerTelegramId);
     var hp    = isOwn && !!(botConfig.extraInstructions && botConfig.extraInstructions.trim());
-    var conf  = ch==='uz' ? "✅ Til: O'zbek tili tanlandi!" : ch==='en' ? '✅ Language: English selected!' : '✅ Язык: Русский выбран!';
+    var conf  = ch==='uz' ? "✅ Til: O\'zbek tili tanlandi!" : ch==='en' ? '✅ Language: English selected!' : '✅ Язык: Русский выбран!';
     await ctx.editMessageText(conf);
-    await ctx.reply(t('start_greeting',ch,fname,botConfig.userTitle||"do'stim"), mainKeyboard(ch,isOwn,hp));
+    await ctx.reply(t('start_greeting',ch,fname,botConfig.userTitle||"do\'stim"), mainKeyboard(ch,isOwn,hp));
   });
 
   bot.command('menu', async (ctx) => {
@@ -513,7 +542,7 @@ async function launchUserBot(botConfig) {
     var l     = lang(ctx);
 
     // Har user uchun limit tekshiruvi
-    var profile = await getUserProfile(uid);
+    var profile = await getUserProfile(uid, ctx);
     var chk = await checkSessionLimit(profile, l);
     if (!chk.allowed) return ctx.editMessageText(chk.msg, chk.keyboard||{});
     await UserProfile.findByIdAndUpdate(profile._id, {$inc:{monthlySessions:1}});
@@ -599,10 +628,10 @@ async function launchUserBot(botConfig) {
   });
   bot.action('edit_language', async (ctx) => {
     await ctx.answerCbQuery();
-    var names = { uz:"O'zbek", ru:'Rus', en:'Ingliz' };
-    await ctx.editMessageText('Tilni tanlang:\nHozir: '+(names[botConfig.language]||"O'zbek"),
+    var names = { uz:"O\'zbek", ru:'Rus', en:'Ingliz' };
+    await ctx.editMessageText('Tilni tanlang:\nHozir: '+(names[botConfig.language]||"O\'zbek"),
       Markup.inlineKeyboard([
-        [Markup.button.callback("🇺🇿 O'zbek",'set_bot_lang_uz')],
+        [Markup.button.callback("🇺🇿 O\'zbek",'set_bot_lang_uz')],
         [Markup.button.callback('🇷🇺 Rus','set_bot_lang_ru')],
         [Markup.button.callback('🇬🇧 Ingliz','set_bot_lang_en')]
       ])
@@ -614,8 +643,8 @@ async function launchUserBot(botConfig) {
     var lc = ctx.match[1];
     botConfig.language = lc;
     await UserBot.findByIdAndUpdate(botConfig._id,{$set:{language:lc}});
-    var names = { uz:"O'zbek", ru:'Rus', en:'Ingliz' };
-    await ctx.editMessageText('Bot tili '+(names[lc]||lc)+" ga o'zgardi!");
+    var names = { uz:"O\'zbek", ru:'Rus', en:'Ingliz' };
+    await ctx.editMessageText('Bot tili '+(names[lc]||lc)+" ga o\'zgardi!");
   });
   bot.action('edit_personality', async (ctx) => {
     await ctx.answerCbQuery();
@@ -635,7 +664,7 @@ async function launchUserBot(botConfig) {
     botConfig.personality = p;
     await UserBot.findByIdAndUpdate(botConfig._id,{$set:{personality:p}});
     var names = { friendly:'Samimiy', professional:'Professional', funny:'Quvnoq', strict:'Qisqa va aniq' };
-    await ctx.editMessageText('Uslub '+(names[p]||p)+" ga o'zgardi!");
+    await ctx.editMessageText('Uslub '+(names[p]||p)+" ga o\'zgardi!");
   });
 
   // ═══════════════════════════════════════════════
@@ -651,14 +680,14 @@ async function launchUserBot(botConfig) {
     var sess = await ChatSession.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
     if (cnt===0 && sess===0) {
       return openZone(ctx,
-        l==='uz' ? "📊 Hali statistika yo'q.\n\nBirinchi savolingizni yozing!"
+        l==='uz' ? "📊 Hali statistika yo\'q.\n\nBirinchi savolingizni yozing!"
         :l==='en' ? "📊 No statistics yet.\n\nWrite your first question!"
         :'📊 Статистики пока нет.\n\nНапишите первый вопрос!',
         Markup.inlineKeyboard([[Markup.button.callback(t('btn_close',l),'zone_close')]])
       );
     }
-    // Har user o'z profilidagi plan/limitlarni ko'radi
-    var profile = await getUserProfile(uid);
+    // Har user o\'z profilidagi plan/limitlarni ko\'radi
+    var profile = await getUserProfile(uid, ctx);
     var plan    = profile.currentPlan || 'free';
     var lims    = PLAN_LIMITS[plan];
     var pct     = await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
@@ -677,7 +706,7 @@ async function launchUserBot(botConfig) {
       t('stats_monthly_ppt',l,profile.monthlyPpt||0,lims.ppt===Infinity?'∞':lims.ppt)+'\n'+
       (l==='uz'?'🎭 Personalar: ':l==='en'?'🎭 Personas: ':'🎭 Персон: ')+pct+'/'+perMax;
 
-    // Egasi uchun bot umumiy statistikasi ham ko'rinadi
+    // Egasi uchun bot umumiy statistikasi ham ko\'rinadi
     if (isOwn) {
       var freshBot = await UserBot.findById(botConfig._id);
       if (freshBot) {
@@ -699,13 +728,13 @@ async function launchUserBot(botConfig) {
     var cnt  = hist ? Math.floor(hist.messages.length/2) : 0;
     var l    = lang(ctx);
     if (cnt===0) return openZone(ctx,
-      l==='uz'?"🗑 Xotirada hech narsa yo'q.":l==='en'?'🗑 Memory is empty.':'🗑 Память пуста.',
+      l==='uz'?"🗑 Xotirada hech narsa yo\'q.":l==='en'?'🗑 Memory is empty.':'🗑 Память пуста.',
       Markup.inlineKeyboard([[Markup.button.callback(t('btn_close',l),'zone_close')]])
     );
     var yes = l==='uz'?'✅ Ha, tozala':l==='en'?'✅ Yes, clear':'✅ Да, очистить';
     var no  = l==='uz'?'❌ Bekor':l==='en'?'❌ Cancel':'❌ Отмена';
     await openZone(ctx,
-      l==='uz'?"🗑 Xotirani tozalash\n\n"+cnt+" ta suhbat o'chiriladi.\n(Qaytarib bo'lmaydi)\n\nIshonchingiz komilmi?"
+      l==='uz'?"🗑 Xotirani tozalash\n\n"+cnt+" ta suhbat o\'chiriladi.\n(Qaytarib bo\'lmaydi)\n\nIshonchingiz komilmi?"
       :l==='en'?"🗑 Clear memory\n\n"+cnt+" conversation(s) will be deleted.\n(Cannot be undone)\n\nAre you sure?"
       :'🗑 Очистить память\n\n'+cnt+' разговор(а) будет удалено.\n(Нельзя отменить)\n\nВы уверены?',
       Markup.inlineKeyboard([[Markup.button.callback(yes,'confirm_clear'),Markup.button.callback(no,'cancel_clear')]])
@@ -724,7 +753,7 @@ async function launchUserBot(botConfig) {
     await ctx.answerCbQuery();
     await ctx.editMessageText('🌐 Tilni tanlang / Выберите язык / Choose language:',
       Markup.inlineKeyboard([[
-        Markup.button.callback("🇺🇿 O'zbek",'set_lang_ui_uz'),
+        Markup.button.callback("🇺🇿 O\'zbek",'set_lang_ui_uz'),
         Markup.button.callback('🇷🇺 Русский','set_lang_ui_ru'),
         Markup.button.callback('🇬🇧 English','set_lang_ui_en')
       ]])
@@ -794,10 +823,10 @@ async function launchUserBot(botConfig) {
       '\n\n'+(l==='uz'?'▶️ Faollashtirildi — yozing!':l==='en'?'▶️ Active — write!':'▶️ Активна — пишите!');
 
     var btns = [
-      [Markup.button.callback(l==='uz'?"📋 Tarixni o'qish":l==='en'?'📋 Read history':'📋 История','read_session_'+sessId),
+      [Markup.button.callback(l==='uz'?"📋 Tarixni o\'qish":l==='en'?'📋 Read history':'📋 История','read_session_'+sessId),
        Markup.button.callback(l==='uz'?"📥 Yuklab olish":l==='en'?'📥 Download':'📥 Скачать','dl_session_'+sessId)],
-      [Markup.button.callback(l==='uz'?"🗑 O'chirish":l==='en'?'🗑 Delete':'🗑 Удалить','del_session_'+sessId),
-       Markup.button.callback(l==='uz'?"◀️ Ro'yxat":l==='en'?"◀️ List":"◀️ Список",'sessions_back_list')]
+      [Markup.button.callback(l==='uz'?"🗑 O\'chirish":l==='en'?'🗑 Delete':'🗑 Удалить','del_session_'+sessId),
+       Markup.button.callback(l==='uz'?"◀️ Ro\'yxat":l==='en'?"◀️ List":"◀️ Список",'sessions_back_list')]
     ];
 
     await ctx.editMessageText(header,{
@@ -816,7 +845,7 @@ async function launchUserBot(botConfig) {
     var sess   = await ChatSession.findOne({_id:sessId,botId:botConfig._id,userTelegramId:uid});
     if (!sess) return ctx.answerCbQuery(l==='uz'?'Suhbat topilmadi.':l==='en'?'Not found.':'Не найдена.', true);
     if (!sess.messages||!sess.messages.length) {
-      return ctx.answerCbQuery(l==='uz'?"Bo'sh — xabar yo'q.":l==='en'?'Empty.':'Пусто.', true);
+      return ctx.answerCbQuery(l==='uz'?"Bo\'sh — xabar yo\'q.":l==='en'?'Empty.':'Пусто.', true);
     }
 
     var msgs    = sess.messages.slice(-30);
@@ -840,11 +869,11 @@ async function launchUserBot(botConfig) {
       return who+':\n'+cleanContent+'\n'+sep;
     });
 
-    // Header birinchi partga qo'shiladi
+    // Header birinchi partga qo\'shiladi
     cur = header;
     for (var bi=0; bi<blocks.length; bi++) {
       var blk = blocks[bi];
-      // Bitta blok LIMIT dan katta bo'lsa — qisqartiramiz
+      // Bitta blok LIMIT dan katta bo\'lsa — qisqartiramiz
       if (blk.length > LIMIT) {
         blk = blk.slice(0, LIMIT-50) + '\n<i>... (qolgan qism yuklab oling)</i>\n';
       }
@@ -891,7 +920,7 @@ async function launchUserBot(botConfig) {
       :l==='en'?'🗑 "'+title+'"\n\nDelete this session?'
       :'🗑 "'+title+'"\n\nУдалить эту беседу?';
     await ctx.editMessageText(msg, Markup.inlineKeyboard([
-      [Markup.button.callback(l==='uz'?"✅ Ha, o'chir":l==='en'?'✅ Yes, delete':'✅ Да, удалить','confirm_del_session_'+sessId),
+      [Markup.button.callback(l==='uz'?"✅ Ha, o\'chir":l==='en'?'✅ Yes, delete':'✅ Да, удалить','confirm_del_session_'+sessId),
        Markup.button.callback(l==='uz'?'❌ Bekor':l==='en'?'❌ Cancel':'❌ Отмена','open_session_'+sessId)]
     ]));
   });
@@ -905,9 +934,9 @@ async function launchUserBot(botConfig) {
       ctx.session.activeSessionId = null;
     }
     var l = lang(ctx);
-    // editMessageText o'rniga yangi xabar — 400 xatosidan qochish
+    // editMessageText o\'rniga yangi xabar — 400 xatosidan qochish
     try { await bot.telegram.deleteMessage(ctx.chat.id, ctx.callbackQuery.message.message_id); } catch(_) {}
-    await ctx.reply(l==='uz'?"✅ Suhbat o'chirildi.":l==='en'?'✅ Session deleted.':'✅ Беседа удалена.');
+    await ctx.reply(l==='uz'?"✅ Suhbat o\'chirildi.":l==='en'?'✅ Session deleted.':'✅ Беседа удалена.');
     await showSessionsList(ctx, false);
   });
 
@@ -920,19 +949,19 @@ async function launchUserBot(botConfig) {
     ctx.session = ctx.session||{};
     ctx.session.activeSessionId = null;
     ctx.session.sessionSavedNotified = true;
-    // Ro'yxatga qaytish
+    // Ro\'yxatga qaytish
     await showSessionsList(ctx, true);
   });
 
   // ═══════════════════════════════════════════════
-  // ⚙️ SOZLAMALAR — FIX #4: barcha foydalanuvchilar ko'ra oladi
+  // ⚙️ SOZLAMALAR — FIX #4: barcha foydalanuvchilar ko\'ra oladi
   // ═══════════════════════════════════════════════
   bot.hears(['⚙️ Sozlamalar','⚙️ Настройки','⚙️ Settings'], async (ctx) => {
     await notifySessionSavedIfNeeded(ctx);
     var uid  = String(ctx.from.id);
     var isOwn = uid === String(botConfig.ownerTelegramId);
     var l    = lang(ctx);
-    var profile = await getUserProfile(uid);
+    var profile = await getUserProfile(uid, ctx);
     var plan    = profile.currentPlan || 'free';
     var maxP    = PLAN_LIMITS[plan].personas;
     var cnt     = await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
@@ -942,12 +971,12 @@ async function launchUserBot(botConfig) {
       ? '⚙️ Settings\n\nMy personas: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n\nA persona is an AI conversation style.'
       : '⚙️ Настройки\n\nМои персоны: '+cnt+'/'+(maxP===Infinity?'∞':maxP)+'\n\nПерсона — стиль общения AI.';
     var settBtns = [];
-    // Egasi uchun bot sozlamalari ham ko'rinadi
     if (isOwn) {
       settBtns.push([Markup.button.callback(t('btn_bot_settings',l),'sett_bot_config')]);
     }
     settBtns.push(
-      [Markup.button.callback(l==='uz'?"🧠 Modellarni ko'rish":l==='en'?'🧠 View personas':'🧠 Просмотр персон','show_personas')],
+      [Markup.button.callback(l==='uz'?'🤖 Mening AI sozlamalarim':l==='en'?'🤖 My AI settings':'🤖 Мои настройки AI','sett_my_ai')],
+      [Markup.button.callback(l==='uz'?"🧠 Modellarni ko\'rish":l==='en'?'🧠 View personas':'🧠 Просмотр персон','show_personas')],
       [Markup.button.callback(l==='uz'?'➕ Yangi model yaratish':l==='en'?'➕ Create new persona':'➕ Создать персону','create_persona')],
       [Markup.button.callback(l==='uz'?'📋 Tayyor modellar':l==='en'?'📋 Ready personas':'📋 Готовые персоны','builtin_personas')],
       [Markup.button.callback(t('btn_change_lang',l),'change_interface_lang')],
@@ -956,8 +985,116 @@ async function launchUserBot(botConfig) {
     await openZone(ctx,settTitle,Markup.inlineKeyboard(settBtns));
   });
 
+  // ── Shaxsiy AI sozlamalari (har user uchun) ──
+  bot.action('sett_my_ai', async (ctx) => {
+    await ctx.answerCbQuery();
+    var uid2  = String(ctx.from.id);
+    var l     = lang(ctx);
+    var prof2 = await getUserProfile(uid2, ctx);
+    var eff2  = getEffectiveCfg(botConfig, prof2);
+    var pNames = {friendly:'Samimiy',professional:'Professional',funny:'Quvnoq',strict:'Qisqa va aniq'};
+    var persStr = pNames[eff2.personality]||'Samimiy';
+    var hasCustom = prof2.customBotName||prof2.customPersonality||(prof2.customTopics&&prof2.customTopics.length)||prof2.customExtra||prof2.customLanguage;
+    var txt = (l==='uz'?'🤖 Mening AI sozlamalarim':l==='en'?'🤖 My AI settings':'🤖 Мои настройки AI')+'\n\n'+
+      (l==='uz'?'Nom: ':l==='en'?'Name: ':'Имя: ')+esc(eff2.botName||'AI')+(prof2.customBotName?' ✏️':'')+'\n'+
+      (l==='uz'?'Uslub: ':l==='en'?'Style: ':'Стиль: ')+persStr+(prof2.customPersonality?' ✏️':'')+'\n'+
+      (l==='uz'?'Til: ':l==='en'?'Lang: ':'Язык: ')+(eff2.language||'uz')+(prof2.customLanguage?' ✏️':'')+'\n'+
+      (l==='uz'?'Prompt: ':l==='en'?'Prompt: ':'Промпт: ')+(prof2.customExtra?'✅ bor':'—')+'\n\n'+
+      (hasCustom?(l==='uz'?'✅ Shaxsiy sozlamalar faol':l==='en'?'✅ Custom settings active':'✅ Личные настройки активны'):(l==='uz'?'ℹ️ Standart sozlamalar':'ℹ️ Default settings'));
+    await ctx.editMessageText(txt, Markup.inlineKeyboard([
+      [Markup.button.callback(l==='uz'?'✏️ AI nomi':l==='en'?'✏️ AI name':'✏️ Имя AI','my_ai_name')],
+      [Markup.button.callback(l==='uz'?'🎭 Uslub':l==='en'?'🎭 Style':'🎭 Стиль','my_ai_personality'),
+       Markup.button.callback(l==='uz'?'🌐 Til':l==='en'?'🌐 Language':'🌐 Язык','my_ai_language')],
+      [Markup.button.callback(l==='uz'?'📝 Prompt':l==='en'?'📝 Prompt':'📝 Промпт','my_ai_extra')],
+      [Markup.button.callback(l==='uz'?'🔄 Standartga qaytarish':l==='en'?'🔄 Reset to default':'🔄 Сбросить','my_ai_reset')],
+      [Markup.button.callback(l==='uz'?'◀️ Orqaga':l==='en'?'◀️ Back':'◀️ Назад','sett_back')]
+    ]));
+  });
 
-  // Bot sozlamalari — Sozlamalar bo'limidan
+  bot.action('my_ai_name', async (ctx) => {
+    await ctx.answerCbQuery();
+    ctx.session=ctx.session||{}; ctx.session.step='my_ai_set_name';
+    var l=lang(ctx); var prof=await getUserProfile(String(ctx.from.id),ctx); var eff=getEffectiveCfg(botConfig,prof);
+    await ctx.editMessageText((l==='uz'?'AI nomini yozing. Hozir: ':l==='en'?'Write AI name. Now: ':'Имя AI. Сейчас: ')+esc(eff.botName||'AI'));
+  });
+
+  bot.action('my_ai_personality', async (ctx) => {
+    await ctx.answerCbQuery();
+    var l=lang(ctx);
+    await ctx.editMessageText(l==='uz'?'Uslubni tanlang:':l==='en'?'Choose style:':'Выберите стиль:',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('😊 Samimiy','my_ai_pers_friendly'),Markup.button.callback('💼 Professional','my_ai_pers_professional')],
+        [Markup.button.callback('😄 Quvnoq','my_ai_pers_funny'),Markup.button.callback('🎯 Qisqa va aniq','my_ai_pers_strict')],
+        [Markup.button.callback(l==='uz'?'🔄 Standartga':l==='en'?'🔄 Default':'🔄 По умолч.','my_ai_pers_reset')]
+      ]));
+  });
+
+  bot.action(/^my_ai_pers_(friendly|professional|funny|strict|reset)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    var uid3=String(ctx.from.id); var val=ctx.match[1]==='reset'?null:ctx.match[1];
+    await UserProfile.findOneAndUpdate({botId:botConfig._id,userTelegramId:uid3},{$set:{customPersonality:val,updatedAt:new Date()}});
+    var l=lang(ctx);
+    await ctx.editMessageText(val?(l==='uz'?'Uslub saqlandi!':l==='en'?'Style saved!':'Стиль сохранён!'):(l==='uz'?'Standart uslub':l==='en'?'Default style':'Стиль по умолчанию'));
+  });
+
+  bot.action('my_ai_language', async (ctx) => {
+    await ctx.answerCbQuery();
+    var l=lang(ctx);
+    await ctx.editMessageText(l==='uz'?'AI javob tilini tanlang:':l==='en'?'AI response language:':'Язык ответа AI:',
+      Markup.inlineKeyboard([
+        [Markup.button.callback("O\'zbek",'my_ai_lang_uz'),Markup.button.callback('Русский','my_ai_lang_ru'),Markup.button.callback('English','my_ai_lang_en')],
+        [Markup.button.callback(l==='uz'?'Standartga':l==='en'?'Default':'По умолч.','my_ai_lang_reset')]
+      ]));
+  });
+
+  bot.action(/^my_ai_lang_(uz|ru|en|reset)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    var uid4=String(ctx.from.id); var val2=ctx.match[1]==='reset'?null:ctx.match[1];
+    await UserProfile.findOneAndUpdate({botId:botConfig._id,userTelegramId:uid4},{$set:{customLanguage:val2,updatedAt:new Date()}});
+    var l=lang(ctx);
+    await ctx.editMessageText(val2?'Til saqlandi: '+val2:(l==='uz'?'Standart til':l==='en'?'Default language':'Язык по умолчанию'));
+  });
+
+  bot.action('my_ai_extra', async (ctx) => {
+    await ctx.answerCbQuery();
+    ctx.session=ctx.session||{}; ctx.session.step='my_ai_set_extra';
+    var l=lang(ctx); var prof=await getUserProfile(String(ctx.from.id),ctx);
+    var cur=prof.customExtra?'Hozirgi: "'+prof.customExtra.slice(0,80)+'"\n\n':'';
+    await ctx.editMessageText(
+      (l==='uz'?'AI ga maxsus topshiriq yozing.\n\n'+cur+'Misol: "Faqat dasturlash haqida javob ber"'
+       :l==='en'?'Write special instruction for AI.\n\n'+cur+'Example: "Only answer about programming"'
+       :'Напишите особое задание для AI.\n\n'+cur+'Пример: "Отвечай только о программировании"'),
+      Markup.inlineKeyboard([[Markup.button.callback(l==='uz'?'Tozalash':l==='en'?'Clear':'Очистить','my_ai_extra_clear')]]));
+  });
+
+  bot.action('my_ai_extra_clear', async (ctx) => {
+    await ctx.answerCbQuery();
+    await UserProfile.findOneAndUpdate({botId:botConfig._id,userTelegramId:String(ctx.from.id)},{$set:{customExtra:null,updatedAt:new Date()}});
+    var l=lang(ctx);
+    await ctx.editMessageText(l==='uz'?'Prompt tozalandi.':l==='en'?'Prompt cleared.':'Промпт очищен.');
+  });
+
+  bot.action('my_ai_reset', async (ctx) => {
+    await ctx.answerCbQuery();
+    var l=lang(ctx);
+    await ctx.editMessageText(l==='uz'?'Barcha shaxsiy AI sozlamalar o\'chiriladi. Davom etasizmi?':l==='en'?'All personal AI settings will be cleared. Continue?':'Все личные настройки AI будут сброшены. Продолжить?',
+      Markup.inlineKeyboard([
+        [Markup.button.callback(l==='uz'?'Ha':'Yes/Да','my_ai_reset_confirm')],
+        [Markup.button.callback(l==='uz'?'Bekor':l==='en'?'Cancel':'Отмена','sett_my_ai')]
+      ]));
+  });
+
+  bot.action('my_ai_reset_confirm', async (ctx) => {
+    await ctx.answerCbQuery();
+    await UserProfile.findOneAndUpdate(
+      {botId:botConfig._id,userTelegramId:String(ctx.from.id)},
+      {$set:{customBotName:null,customPersonality:null,customTopics:[],customExtra:null,customUserTitle:null,customLanguage:null,updatedAt:new Date()}}
+    );
+    var l=lang(ctx);
+    await ctx.editMessageText(l==='uz'?'Standart sozlamalarga qaytildi.':l==='en'?'Reset to defaults.':'Сброшено до настроек по умолчанию.');
+  });
+
+  // Bot sozlamalari — Sozlamalar bo'limidan (faqat owner)
   bot.action('sett_bot_config', async (ctx) => {
     await ctx.answerCbQuery();
     var l = lang(ctx);
@@ -986,7 +1123,7 @@ async function launchUserBot(botConfig) {
     var uid   = String(ctx.from.id);
     var isOwn = uid === String(botConfig.ownerTelegramId);
     var l     = lang(ctx);
-    var profile = await getUserProfile(uid);
+    var profile = await getUserProfile(uid, ctx);
     var plan    = profile.currentPlan || 'free';
     var maxP    = PLAN_LIMITS[plan].personas;
     var cnt     = await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
@@ -998,9 +1135,10 @@ async function launchUserBot(botConfig) {
     var settBtns = [];
     if (isOwn) settBtns.push([Markup.button.callback(t('btn_bot_settings',l),'sett_bot_config')]);
     settBtns.push(
-      [Markup.button.callback(l==='uz'?"🧠 Modellarni ko'rish":l==='en'?'🧠 View personas':'🧠 Просмотр персон','show_personas')],
+      [Markup.button.callback(l==='uz'?'🤖 Mening AI sozlamalarim':l==='en'?'🤖 My AI settings':'🤖 Мои настройки AI','sett_my_ai')],
+      [Markup.button.callback(l==='uz'?"🧠 Modellarni ko\'rish":l==='en'?'🧠 View personas':'🧠 Просмотр персон','show_personas')],
       [Markup.button.callback(l==='uz'?'➕ Yangi model yaratish':l==='en'?'➕ Create new persona':'➕ Создать персону','create_persona')],
-      [Markup.button.callback(l==='uz'?'📋 Tayyor modellar':l==='en'?'📋 Ready personas':'📋 Готовые персоны','builtin_personas')],
+      [Markup.button.callback(l==='uz'?'📋 Tayyor modellar':l==='en'?'📋 Ready personas':'📋 Готовые персonar','builtin_personas')],
       [Markup.button.callback(t('btn_change_lang',l),'change_interface_lang')],
       [Markup.button.callback(t('btn_close',l),'zone_close')]
     );
@@ -1011,7 +1149,7 @@ async function launchUserBot(botConfig) {
     await ctx.answerCbQuery();
     var uid=String(ctx.from.id);
     var list=await Persona.find({botId:botConfig._id,userTelegramId:uid,isActive:true});
-    if (!list.length) return ctx.editMessageText("Hali model yo'q.\n\nQuyidan tayyor model qo'shing.",Markup.inlineKeyboard([
+    if (!list.length) return ctx.editMessageText("Hali model yo\'q.\n\nQuyidan tayyor model qo\'shing.",Markup.inlineKeyboard([
       [Markup.button.callback('📋 Tayyor modellar','builtin_personas')],
       [Markup.button.callback('➕ Yangi yaratish','create_persona')]
     ]));
@@ -1028,7 +1166,7 @@ async function launchUserBot(botConfig) {
     await ctx.answerCbQuery();
     var text='Tayyor modellar:\n\n';
     BUILTIN_PERSONAS.forEach(p=>{ text+=p.emoji+' '+p.name+' — '+p.desc+'\n'; });
-    var btns=BUILTIN_PERSONAS.map(p=>[Markup.button.callback("➕ "+p.emoji+' '+p.name+" qo'shish",'add_builtin_'+p.key)]);
+    var btns=BUILTIN_PERSONAS.map(p=>[Markup.button.callback("➕ "+p.emoji+' '+p.name+" qo\'shish",'add_builtin_'+p.key)]);
     btns.push([Markup.button.callback('🔙 Orqaga','show_personas'),Markup.button.callback(t('btn_close',lang(ctx)),'zone_close')]);
     await ctx.editMessageText(text,Markup.inlineKeyboard(btns));
   });
@@ -1038,15 +1176,15 @@ async function launchUserBot(botConfig) {
     var uid=String(ctx.from.id);
     var bp=BUILTIN_PERSONAS.find(p=>p.key===ctx.match[1]);
     if (!bp) return ctx.editMessageText('Topilmadi.');
-    var profile = await getUserProfile(uid);
+    var profile = await getUserProfile(uid, ctx);
     var cnt=await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
     var chk=await checkPersonaLimit(profile,cnt,lang(ctx));
     if (!chk.allowed) return ctx.editMessageText(chk.msg,chk.keyboard||{});
     var ex=await Persona.findOne({botId:botConfig._id,userTelegramId:uid,name:bp.name,isActive:true});
     if (ex) return ctx.editMessageText(bp.emoji+' '+bp.name+' modeli allaqachon bor.');
     await Persona.create({botId:botConfig._id,userTelegramId:uid,name:bp.name,description:bp.desc,systemPrompt:bp.prompt,emoji:bp.emoji,isBuiltin:true});
-    await ctx.editMessageText(bp.emoji+' '+bp.name+" modeli qo'shildi!\n\nIshlatish uchun: Sozlamalar → Modellarni ko'rish",
-      Markup.inlineKeyboard([[Markup.button.callback("🧠 Modellarni ko'rish",'show_personas')]]));
+    await ctx.editMessageText(bp.emoji+' '+bp.name+" modeli qo\'shildi!\n\nIshlatish uchun: Sozlamalar → Modellarni ko\'rish",
+      Markup.inlineKeyboard([[Markup.button.callback("🧠 Modellarni ko\'rish",'show_personas')]]));
   });
 
   bot.action(/^use_persona_(.+)$/, async (ctx) => {
@@ -1063,8 +1201,8 @@ async function launchUserBot(botConfig) {
     var uid=String(ctx.from.id);
     var p=await Persona.findOne({_id:ctx.match[1],botId:botConfig._id,userTelegramId:uid});
     if (!p) return;
-    await ctx.editMessageText(p.emoji+' '+p.name+" modelini o'chirasizmi?",Markup.inlineKeyboard([
-      [Markup.button.callback("Ha, o'chir",'confirm_del_persona_'+ctx.match[1])],
+    await ctx.editMessageText(p.emoji+' '+p.name+" modelini o\'chirasizmi?",Markup.inlineKeyboard([
+      [Markup.button.callback("Ha, o\'chir",'confirm_del_persona_'+ctx.match[1])],
       [Markup.button.callback('Bekor','show_personas')]
     ]));
   });
@@ -1074,13 +1212,13 @@ async function launchUserBot(botConfig) {
     var uid=String(ctx.from.id);
     await Persona.findOneAndUpdate({_id:ctx.match[1],botId:botConfig._id,userTelegramId:uid},{$set:{isActive:false}});
     if (ctx.session&&ctx.session.activePersonaId===ctx.match[1]) ctx.session.activePersonaId=null;
-    await ctx.editMessageText("Model o'chirildi.");
+    await ctx.editMessageText("Model o\'chirildi.");
   });
 
   bot.action('create_persona', async (ctx) => {
     await ctx.answerCbQuery();
     var uid=String(ctx.from.id);
-    var profile = await getUserProfile(uid);
+    var profile = await getUserProfile(uid, ctx);
     var cnt=await Persona.countDocuments({botId:botConfig._id,userTelegramId:uid,isActive:true});
     var chk=await checkPersonaLimit(profile,cnt,lang(ctx));
     if (!chk.allowed) return ctx.editMessageText(chk.msg,chk.keyboard||{});
@@ -1093,13 +1231,13 @@ async function launchUserBot(botConfig) {
   // ═══════════════════════════════════════════════
   bot.hears(['🎭 Promptizatsiya','🎭 Промпты','🎭 Prompts'], async (ctx) => {
     await notifySessionSavedIfNeeded(ctx);
-    if (String(ctx.from.id)!==String(botConfig.ownerTelegramId)) return ctx.reply("Bu bo'lim faqat bot egasi uchun.");
+    // Promptizatsiya endi hamma uchun — o\'z profiliga yozadi
     await openZone(ctx,
       '🎭 Promptizatsiya\n\n━━━━━━━━━━━━━━━━━━━\n🧬 Asosiy prompt\n📖 Yo\'riqnoma\n👁 Joriy holat\n🔄 Asl holatga qaytarish\n━━━━━━━━━━━━━━━━━━━',
       Markup.inlineKeyboard([
         [Markup.button.callback('🧬 Asosiy promptni sozlash','prz_main')],
-        [Markup.button.callback("👁 Joriy holatni ko'rish",'prz_view')],
-        [Markup.button.callback("📖 Yo'riqnoma",'prz_guide')],
+        [Markup.button.callback("👁 Joriy holatni ko\'rish",'prz_view')],
+        [Markup.button.callback("📖 Yo\'riqnoma",'prz_guide')],
         [Markup.button.callback('🔄 Asl holatga qaytarish','prz_reset')],
         [Markup.button.callback('✕ Yopish','zone_close')]
       ])
@@ -1109,42 +1247,47 @@ async function launchUserBot(botConfig) {
   bot.action('prz_guide', async (ctx) => {
     await ctx.answerCbQuery();
     await ctx.editMessageText(
-      "📖 Promptizatsiya yo'riqnomasi\n\n1. ROL → \"Sen tajribali maslahatchi sisan\"\n2. USLUB → \"Professional, lekin quruq emas\"\n3. CHEKLOV → \"Faqat moliya mavzularida javob ber\"",
+      "📖 Promptizatsiya yo\'riqnomasi\n\n1. ROL → \"Sen tajribali maslahatchi sisan\"\n2. USLUB → \"Professional, lekin quruq emas\"\n3. CHEKLOV → \"Faqat moliya mavzularida javob ber\"",
       Markup.inlineKeyboard([[Markup.button.callback("🧬 Promptni sozlash",'prz_main')],[Markup.button.callback('◀️ Orqaga','prz_back')]])
     );
   });
 
   bot.action('prz_view', async (ctx) => {
     await ctx.answerCbQuery();
-    var hasC = botConfig.extraInstructions && botConfig.extraInstructions.trim();
-    if (!hasC) return ctx.editMessageText("👁 Joriy holat\n\nStandart sozlama — o'zgartirilmagan.",
+    var przProf = await getUserProfile(String(ctx.from.id), ctx);
+    var hasC = przProf.customExtra && przProf.customExtra.trim();
+    if (!hasC) return ctx.editMessageText("👁 Joriy holat\n\nStandart sozlama — o\'zgartirilmagan.",
       Markup.inlineKeyboard([[Markup.button.callback('🧬 Prompt sozlash','prz_main')],[Markup.button.callback('◀️ Orqaga','prz_back')]]) );
-    var prev = botConfig.extraInstructions.slice(0,500)+(botConfig.extraInstructions.length>500?'...':'');
+    var prev = przProf.customExtra.slice(0,500)+(przProf.customExtra.length>500?'...':'');
     await ctx.editMessageText('👁 Joriy prompt\n\n━━━━━━━━━━━━━━━━━━━\n'+prev+'\n━━━━━━━━━━━━━━━━━━━',
-      Markup.inlineKeyboard([[Markup.button.callback("✏️ O'zgartirish",'prz_main')],[Markup.button.callback('🔄 Asl holatga','prz_reset')],[Markup.button.callback('◀️ Orqaga','prz_back')]]) );
+      Markup.inlineKeyboard([[Markup.button.callback("✏️ O\'zgartirish",'prz_main')],[Markup.button.callback('🔄 Asl holatga','prz_reset')],[Markup.button.callback('◀️ Orqaga','prz_back')]]) );
   });
 
   bot.action('prz_main', async (ctx) => {
     await ctx.answerCbQuery();
     ctx.session=ctx.session||{}; ctx.session.step='prz_set_main';
-    var cur = botConfig.extraInstructions && botConfig.extraInstructions.trim()
-      ? '📌 Hozirgi:\n"'+botConfig.extraInstructions.slice(0,150)+(botConfig.extraInstructions.length>150?'..."':'"')+'\n\n' : '';
+    var pMain = await getUserProfile(String(ctx.from.id), ctx);
+    var cur = pMain.customExtra && pMain.customExtra.trim()
+      ? '📌 Hozirgi:\n"'+pMain.customExtra.slice(0,150)+(pMain.customExtra.length>150?'..."':'"')+'\n\n' : '';
     await ctx.editMessageText('🧬 Asosiy promptni sozlash\n\n'+cur+'💡 Namuna:\n"Sen tajribali dasturlash murabbiyisan."\n\n✍️ Promptingizni yozing ↓',
       Markup.inlineKeyboard([[Markup.button.callback("📖 Yo'riqnoma",'prz_guide')],[Markup.button.callback('❌ Bekor qilish','prz_back')]]) );
   });
 
   bot.action('prz_reset', async (ctx) => {
     await ctx.answerCbQuery();
-    await ctx.editMessageText("🔄 Asl holatga qaytarish\n\nMaxsus prompt o'chiriladi.\n\nDavom etasizmi?",
+    await ctx.editMessageText("🔄 Asl holatga qaytarish\n\nMaxsus prompt o\'chiriladi.\n\nDavom etasizmi?",
       Markup.inlineKeyboard([[Markup.button.callback('✅ Ha, qaytarish','prz_reset_confirm')],[Markup.button.callback('❌ Bekor','prz_back')]]) );
   });
 
   bot.action('prz_reset_confirm', async (ctx) => {
     await ctx.answerCbQuery();
-    botConfig.extraInstructions='';
-    await UserBot.findByIdAndUpdate(botConfig._id,{$set:{extraInstructions:''}});
+    // Shaxsiy prompt o\'chiriladi (botConfig o\'zgarmaydi)
+    await UserProfile.findOneAndUpdate(
+      {botId:botConfig._id,userTelegramId:String(ctx.from.id)},
+      {$set:{customExtra:null,updatedAt:new Date()}}
+    );
     ctx.session=ctx.session||{}; ctx.session.step=null;
-    await ctx.editMessageText('✅ Sozlama tiklandi! Bot standart holatda. 🔄');
+    await ctx.editMessageText('✅ Sozlama tiklandi! Standart holatda. 🔄');
     setTimeout(async()=>{ try{await bot.telegram.deleteMessage(ctx.chat.id,ctx.callbackQuery.message.message_id);}catch(_){} if(ctx.session)ctx.session.zoneMessageId=null; },2000);
   });
 
@@ -1154,8 +1297,8 @@ async function launchUserBot(botConfig) {
     await ctx.editMessageText('🎭 Promptizatsiya\n\n━━━━━━━━━━━━━━━━━━━\n🧬 Asosiy prompt\n📖 Yo\'riqnoma\n👁 Joriy holat\n🔄 Asl holatga qaytarish\n━━━━━━━━━━━━━━━━━━━',
       Markup.inlineKeyboard([
         [Markup.button.callback('🧬 Asosiy promptni sozlash','prz_main')],
-        [Markup.button.callback("👁 Joriy holatni ko'rish",'prz_view')],
-        [Markup.button.callback("📖 Yo'riqnoma",'prz_guide')],
+        [Markup.button.callback("👁 Joriy holatni ko\'rish",'prz_view')],
+        [Markup.button.callback("📖 Yo\'riqnoma",'prz_guide')],
         [Markup.button.callback('🔄 Asl holatga qaytarish','prz_reset')],
         [Markup.button.callback('✕ Yopish','zone_close')]
       ])
@@ -1171,7 +1314,7 @@ async function launchUserBot(botConfig) {
     await notifySessionSavedIfNeeded(ctx);
     ctx.session=ctx.session||{}; ctx.session.ppt=null; ctx.session.step=null;
     var uid     = String(ctx.from.id);
-    var profile = await getUserProfile(uid);
+    var profile = await getUserProfile(uid, ctx);
     var plan    = profile.currentPlan || 'free';
     var l       = lang(ctx);
     var canPro  = PLAN_LIMITS[plan].pptPro > 0;
@@ -1186,7 +1329,7 @@ async function launchUserBot(botConfig) {
       Markup.inlineKeyboard([[Markup.button.callback('📄 Oddiy boshlash','ppt_start_simple')],[Markup.button.callback('◀️ Orqaga','ppt_back')]]) );
   });
 
-  // FIX #3: ppt_need_sub — alohida ctx.reply (zone editMessage bilan to'qnashmaydi)
+  // FIX #3: ppt_need_sub — alohida ctx.reply (zone editMessage bilan to\'qnashmaydi)
   bot.action('ppt_need_sub', async (ctx) => {
     await ctx.answerCbQuery();
     var l=lang(ctx);
@@ -1201,7 +1344,7 @@ async function launchUserBot(botConfig) {
     await ctx.answerCbQuery();
     ctx.session=ctx.session||{}; ctx.session.ppt=null; ctx.session.step=null;
     var uid     = String(ctx.from.id);
-    var profile = await getUserProfile(uid);
+    var profile = await getUserProfile(uid, ctx);
     var plan    = profile.currentPlan || 'free';
     var l=lang(ctx);
     await ctx.editMessageText('🎨 Prezentatsiya yaratish\n\n'+t('ppt_question',l),pptMenu(plan,l));
@@ -1210,7 +1353,7 @@ async function launchUserBot(botConfig) {
   bot.action('ppt_start_simple', async (ctx) => {
     await ctx.answerCbQuery();
     var uid=String(ctx.from.id);
-    var profile = await getUserProfile(uid);
+    var profile = await getUserProfile(uid, ctx);
     var chk=await checkPptLimit(profile,lang(ctx));
     if (!chk.allowed) return ctx.editMessageText(chk.msg,chk.keyboard||{});
     ctx.session=ctx.session||{}; ctx.session.ppt={mode:'simple'}; ctx.session.step='ppt_topic';
@@ -1220,14 +1363,14 @@ async function launchUserBot(botConfig) {
   bot.action('ppt_start_pro', async (ctx) => {
     await ctx.answerCbQuery();
     var uid=String(ctx.from.id);
-    var profile = await getUserProfile(uid);
+    var profile = await getUserProfile(uid, ctx);
     var plan=profile.currentPlan||'free';
     if (PLAN_LIMITS[plan].pptPro===0) return ctx.editMessageText(t('limit_reached_ppt_pro',lang(ctx),plan),Markup.inlineKeyboard([[Markup.button.callback(t('btn_subscribe',lang(ctx)),'sub_show_plans')]]));
     var chk=await checkPptProLimit(profile,lang(ctx));
     if (!chk.allowed) return ctx.editMessageText(chk.msg,chk.keyboard||{});
     ctx.session=ctx.session||{}; ctx.session.ppt={mode:'pro'}; ctx.session.step='ppt_topic';
     await ctx.editMessageText('⭐ Professional prezentatsiya\n\nRang sxemasini tanlang:',Markup.inlineKeyboard([
-      [Markup.button.callback("🔵 Ko'k",'ppt_theme_blue'),Markup.button.callback("🟢 Yashil",'ppt_theme_green')],
+      [Markup.button.callback("🔵 Ko\'k",'ppt_theme_blue'),Markup.button.callback("🟢 Yashil",'ppt_theme_green')],
       [Markup.button.callback('🔴 Qizil','ppt_theme_red'),Markup.button.callback('🌊 Navy','ppt_theme_navy')],
       [Markup.button.callback('💜 Binafsha','ppt_theme_purple')],
       [Markup.button.callback('🤖 Avtomatik','ppt_theme_auto')]
@@ -1238,7 +1381,7 @@ async function launchUserBot(botConfig) {
     await ctx.answerCbQuery();
     ctx.session=ctx.session||{}; ctx.session.ppt=ctx.session.ppt||{mode:'pro'};
     ctx.session.ppt.theme=ctx.match[1]; ctx.session.step='ppt_topic';
-    var n={blue:"Ko'k",green:'Yashil',red:'Qizil',navy:'Navy',purple:'Binafsha',auto:'Avtomatik'};
+    var n={blue:"Ko\'k",green:'Yashil',red:'Qizil',navy:'Navy',purple:'Binafsha',auto:'Avtomatik'};
     await ctx.editMessageText('⭐ '+(n[ctx.match[1]]||'Avtomatik')+' rang tanlandi ✓\n\nMavzuni yozing:\n\n💡 Misol: AI, Marketing\n\n↓ Mavzuni yozing');
   });
 
@@ -1249,7 +1392,7 @@ async function launchUserBot(botConfig) {
     ctx.session.ppt.slideCount=n; ctx.session.step=null;
     await ctx.editMessageText('Mavzu: '+(ctx.session.ppt.topic||'')+'\nSlaydlar: '+n+' ta ✓\n\nReja qanday?',Markup.inlineKeyboard([
       [Markup.button.callback('🤖 AI avtomatik reja','ppt_plan_auto')],
-      [Markup.button.callback("✍️ O'z rejamni kiritaman",'ppt_plan_manual')]
+      [Markup.button.callback("✍️ O\'z rejamni kiritaman",'ppt_plan_manual')]
     ]));
   });
 
@@ -1289,14 +1432,16 @@ async function launchUserBot(botConfig) {
     var slideTxt=l==='uz'?' ta slayd':l==='en'?' slides':' слайдов';
     await ctx.reply((l==='uz'?'🎨 Prezentatsiya yaratilmoqda...':l==='en'?'🎨 Creating presentation...':'🎨 Создание презентации...')+'\n\n📌 '+topic+'\n📊 '+n+slideTxt+(isPro?'  ⭐ Pro':'')+(imgPaths.length?'  🖼 '+imgPaths.length+' ta rasm':'')+'\n\nAI kontent yozmoqda... ⏳');
     try {
-      var aiPrompt=buildPptPrompt({topic,slideCount:n,plan:ppt.plan||null,description:desc||'',language:botConfig.language||'uz',isPro});
+      var pptLangProf = await getUserProfile(String(ctx.from.id), ctx);
+      var pptLang = pptLangProf.customLanguage || botConfig.language || 'uz';
+      var aiPrompt=buildPptPrompt({topic,slideCount:n,plan:ppt.plan||null,description:desc||'',language:pptLang,isPro});
       var rawText=(await getPptAIResponse(aiPrompt)||'').replace(/<[^>]+>/g,' ').replace(/```[\w]*\n?/g,'').trim();
       var si=rawText.indexOf('['),ei=rawText.lastIndexOf(']');
       if (si===-1||ei===-1||ei<=si) {
         rawText=((await getPptAIResponse('FAQAT JSON massiv qaytargil:\n'+aiPrompt))||'').replace(/<[^>]+>/g,' ').replace(/```[\w]*\n?/g,'').trim();
         si=rawText.indexOf('['); ei=rawText.lastIndexOf(']');
       }
-      if (si===-1||ei===-1) throw new Error("AI JSON qaytarmadi. Mavzuni o'zgartirib qayta urining.");
+      if (si===-1||ei===-1) throw new Error("AI JSON qaytarmadi. Mavzuni o\'zgartirib qayta urining.");
       var jsonStr=rawText.slice(si,ei+1).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,'').replace(/[ \t]{2,}/g,' ').replace(/ +\n/g,'\n').replace(/,(\s*[}\]])/g,'$1').replace(/([{,]\s*)(\w+)\s*:/g,'$1"$2":').replace(/:\s*'([^']*?)'/g,': "$1"');
       var slides; try{slides=JSON.parse(jsonStr);}catch(e){slides=JSON.parse(jsonStr.split('\n').map(l=>l.trim()).join('\n'));}
       if (!Array.isArray(slides)||slides.length<2) throw new Error('Slaydlar yetarli emas. Qayta urining.');
@@ -1309,9 +1454,9 @@ async function launchUserBot(botConfig) {
           // Avvalgi slayd mavzusiga bog'liq kontentni kengaytiradi
           slides.push({
             type:'text',
-            title:(prevSl.title?prevSl.title+' — davomi':(fbNum+"-bo'lim")),
+            title:(prevSl.title?prevSl.title+' — davomi':(fbNum+"-bo\'lim")),
             body:topic?(topic+' mavzusining muhim jihatlari va amaliy ko\'llanilishi ko\'rib chiqiladi.'):'Bu bo\'limda asosiy jihatlar tahlil qilinadi.',
-            points:["Asosiy tushunchalar va ta'riflar","Amaliy misollar va qo'llanilishi","Muhim xulosalar"]
+            points:["Asosiy tushunchalar va ta\'riflar","Amaliy misollar va qo\'llanilishi","Muhim xulosalar"]
           });
         }
         if(hasE||slides.length===n-1)slides.push(endSl||{title:'Xulosa',summary:'Prezentatsiya yakunlandi.',isEnd:true});
@@ -1370,7 +1515,7 @@ async function launchUserBot(botConfig) {
     fs.writeFileSync(tmpPath,await resp.buffer());
     images.push(tmpPath); ctx.session.ppt.images=images;
     var rem=imgMax-images.length;
-    await ctx.reply('🖼 Rasm qabul qilindi ('+images.length+'/'+imgMax+')\n\n'+(rem>0?rem+" ta ko'proq yuborishingiz mumkin yoki \"Tayyor\" bosing.":'✅ Maksimal!'),
+    await ctx.reply('🖼 Rasm qabul qilindi ('+images.length+'/'+imgMax+')\n\n'+(rem>0?rem+" ta ko\'proq yuborishingiz mumkin yoki \"Tayyor\" bosing.":'✅ Maksimal!'),
       Markup.inlineKeyboard([[Markup.button.callback('✅ Tayyor, prezentatsiya yarat','ppt_images_done')],[Markup.button.callback('⏭ Rasmsiz davom','ppt_skip_images')]]) );
   });
 
@@ -1407,7 +1552,7 @@ async function launchUserBot(botConfig) {
     var hdr=(l==='uz'?'Yangiliklar':l==='en'?'News':'Новости')+' ('+total+' ta)';
     if(tp>1)hdr+='  |  '+(page+1)+'/'+tp;
     hdr+='\n\n'+(l==='uz'?'Birorta tanlang:':l==='en'?'Select one:':'Выберите:');
-    var btns=list.map(n=>[Markup.button.callback((n.title||"Sarlavha yo'q")+'  •  '+new Date(n.createdAt).toLocaleDateString('ru-RU'),'ub_nws_'+n._id)]);
+    var btns=list.map(n=>[Markup.button.callback((n.title||"Sarlavha yo\'q")+'  •  '+new Date(n.createdAt).toLocaleDateString('ru-RU'),'ub_nws_'+n._id)]);
     var nav=[];
     if(page>0) nav.push(Markup.button.callback('◀️','ub_nws_pg_'+(page-1)));
     if(page<tp-1) nav.push(Markup.button.callback('▶️','ub_nws_pg_'+(page+1)));
@@ -1439,7 +1584,7 @@ async function launchUserBot(botConfig) {
   });
 
   // ═══════════════════════════════════════════════
-  // ⭐ OBUNA TIZIMI — Har bir user o'z obunasini oladi
+  // ⭐ OBUNA TIZIMI — Har bir user o\'z obunasini oladi
   // ═══════════════════════════════════════════════
   bot.hears(['⭐ Obuna','⭐ Подписка','⭐ Subscribe'], async (ctx) => {
     await notifySessionSavedIfNeeded(ctx);
@@ -1454,7 +1599,7 @@ async function launchUserBot(botConfig) {
   async function showSubMenu(ctx, edit) {
     var uid     = String(ctx.from.id);
     var l       = lang(ctx);
-    var profile = await getUserProfile(uid);
+    var profile = await getUserProfile(uid, ctx);
     var plan    = profile.currentPlan || 'free';
     var sub     = await Subscription.findOne({telegramId:uid, botId:botConfig._id, status:{$in:['active','grace']}}).sort({activatedAt:-1});
     var msgText;
@@ -1512,11 +1657,11 @@ async function launchUserBot(botConfig) {
       durationMonths: 1,
       status: 'pending'
     });
-    await ctx.editMessageText(t('sub_order_created', l, planName, price, uniqueId, _cardNumber||"Admin dan so'rang"));
+    await ctx.editMessageText(t('sub_order_created', l, planName, price, uniqueId, _cardNumber||"Admin dan so\'rang"));
     var payLink = subscribeLink(selPlan, uniqueId);
     var payText = t('sub_order_text', l, planName, uniqueId);
     await ctx.reply(
-      (l==='uz' ? "📋 Quyidagi tugmani bosing — admin chatiga o'ting va to'lov qilganingizni bildiring:"
+      (l==='uz' ? "📋 Quyidagi tugmani bosing — admin chatiga o\'ting va to\'lov qilganingizni bildiring:"
        :l==='en' ? '📋 Press the button below — go to admin chat and confirm your payment:'
        :'📋 Нажмите кнопку ниже — перейдите в чат админа и подтвердите оплату:')
       + '\n\n"' + payText + '"',
@@ -1524,9 +1669,9 @@ async function launchUserBot(botConfig) {
     );
     try {
       await bot.telegram.sendMessage(process.env.SUPER_ADMIN_ID,
-        "⭐ Yangi obuna so'rovi!\n\nFoydalanuvchi: "+(ctx.from.first_name||'')+(ctx.from.username?' (@'+ctx.from.username+')':'')
+        "⭐ Yangi obuna so\'rovi!\n\nFoydalanuvchi: "+(ctx.from.first_name||'')+(ctx.from.username?' (@'+ctx.from.username+')':'')
         +'\nTelegram ID: '+uid+'\nBot: @'+botConfig.botUsername
-        +'\nTarif: '+planName+'\nID: '+uniqueId+"\nNarx: "+price+" so'm/oy\n\nTasdiqlash: /activate "+uniqueId,
+        +'\nTarif: '+planName+'\nID: '+uniqueId+"\nNarx: "+price+" so\'m/oy\n\nTasdiqlash: /activate "+uniqueId,
         {reply_markup: Markup.inlineKeyboard([[Markup.button.callback('✅ Tasdiqlash — '+uniqueId, 'adm_activate_'+uniqueId)]]).reply_markup}
       );
     } catch(e) { console.error('[Sub] Admin ga xabar xato:', e.message); }
@@ -1697,7 +1842,7 @@ async function launchUserBot(botConfig) {
       await ctx.replyWithDocument(ppt.fileId,
         {caption:(ppt.isPro?'⭐ Professional':'📄 Oddiy')+' — '+ppt.topic+'\n📊 '+ppt.slideCount+' ta slayd'});
     } catch(e) {
-      // file_id eskirgan bo'lsa xabar
+      // file_id eskirgan bo\'lsa xabar
       var errMsg = l==='uz'?'❌ Fayl topilmadi. Telegram da saqlanish muddati o\'tgan bo\'lishi mumkin.'
         :l==='en'?'❌ File not found. It may have expired on Telegram servers.'
         :'❌ Файл не найден. Срок хранения на серверах Telegram мог истечь.';
@@ -1751,7 +1896,7 @@ async function launchUserBot(botConfig) {
     return lines.join('\n');
   }
 
-  bot.on('voice',(ctx)=>{ var l=lang(ctx); return ctx.reply(l==='uz'?"Ovozni matnga o'girib yozing!":l==='en'?'Please type instead.':'Напишите текстом.'); });
+  bot.on('voice',(ctx)=>{ var l=lang(ctx); return ctx.reply(l==='uz'?"Ovozni matnga o\'girib yozing!":l==='en'?'Please type instead.':'Напишите текстом.'); });
   bot.on('document',(ctx)=>{ var l=lang(ctx); return ctx.reply(l==='uz'?'Fayl mazmunini yozib yuboring.':l==='en'?'Describe the document in text.':'Опишите файл текстом.'); });
   bot.on('sticker',(ctx)=>ctx.reply('😊'));
 
@@ -1765,7 +1910,7 @@ async function launchUserBot(botConfig) {
     ctx.session=ctx.session||{};
     var step=ctx.session.step;
 
-    var wizardSteps=['ppt_topic','ppt_manual_plan','ppt_description','prz_set_main','edit_bot_name','edit_bot_topics','new_session_title','persona_name','persona_emoji','persona_prompt','persona_desc'];
+    var wizardSteps=['ppt_topic','ppt_manual_plan','ppt_description','prz_set_main','edit_bot_name','edit_bot_topics','new_session_title','persona_name','persona_emoji','persona_prompt','persona_desc','my_ai_set_name','my_ai_set_extra'];
     var wizardLabels={ppt_topic:'🎨 Prezentatsiya — mavzu',ppt_manual_plan:'🎨 Prezentatsiya — reja',ppt_description:'🎨 Prezentatsiya — tasavvur',prz_set_main:'🎭 Promptizatsiya — prompt',edit_bot_name:'⚙️ Bot nomi',edit_bot_topics:'⚙️ Mavzular',new_session_title:'🗂 Yangi suhbat sarlavha',persona_name:'🧠 Model nom',persona_emoji:'🧠 Model emoji',persona_prompt:'🧠 Model prompt',persona_desc:'🧠 Model tavsif'};
 
     if (step&&wizardSteps.indexOf(step)!==-1) {
@@ -1809,17 +1954,31 @@ async function launchUserBot(botConfig) {
     }
     if (step==='prz_set_main') {
       if (text.trim().length<10) return ctx.reply('Prompt juda qisqa. Kamida bir gap yozing:');
-      botConfig.extraInstructions=text.trim();
-      await UserBot.findByIdAndUpdate(botConfig._id,{$set:{extraInstructions:text.trim()}});
+      await UserProfile.findOneAndUpdate(
+        {botId:botConfig._id,userTelegramId:uid},
+        {$set:{customExtra:text.trim(),updatedAt:new Date()}}
+      );
       ctx.session.step=null;
       return ctx.reply('✅ Prompt saqlandi!\n\n━━━━━━━━━━━━━━━━━━━\n"'+text.trim().slice(0,120)+(text.trim().length>120?'...':'')+'"',
-        Markup.inlineKeyboard([[Markup.button.callback("👁 Ko'rish",'prz_view')],[Markup.button.callback("✏️ O'zgartirish",'prz_main')]]));
+        Markup.inlineKeyboard([[Markup.button.callback("👁 Ko'rish",'prz_view')],[Markup.button.callback("✏️ O\'zgartirish",'prz_main')]]));
+    }
+    if (step==='my_ai_set_name') {
+      if (text.trim().length<2) return ctx.reply('Nom juda qisqa:');
+      await UserProfile.findOneAndUpdate({botId:botConfig._id,userTelegramId:uid},{$set:{customBotName:text.trim(),updatedAt:new Date()}});
+      ctx.session.step=null;
+      return ctx.reply('AI nomi "'+text.trim()+'" ga o\'zgardi!');
+    }
+    if (step==='my_ai_set_extra') {
+      if (text.trim().length<5) return ctx.reply('Ko\'rsatma juda qisqa:');
+      await UserProfile.findOneAndUpdate({botId:botConfig._id,userTelegramId:uid},{$set:{customExtra:text.trim(),updatedAt:new Date()}});
+      ctx.session.step=null;
+      return ctx.reply('Prompt saqlandi: "'+text.trim().slice(0,80)+(text.trim().length>80?'...':'')+'"');
     }
     if (step==='edit_bot_name') {
       if (text.trim().length<2) return ctx.reply('Nom juda qisqa:');
       botConfig.botName=text.trim();
       await UserBot.findByIdAndUpdate(botConfig._id,{$set:{botName:text.trim()}});
-      ctx.session.step=null; return ctx.reply('Bot nomi "'+text.trim()+"\" ga o'zgardi!");
+      ctx.session.step=null; return ctx.reply('Bot nomi "'+text.trim()+"\" ga o\'zgardi!");
     }
     if (step==='edit_bot_topics') {
       var nt=text.split(',').map(t2=>t2.trim()).filter(Boolean);
@@ -1862,19 +2021,23 @@ async function launchUserBot(botConfig) {
       return ctx.reply("Bu bot band.\n"+esc(botConfig.ownerName||'Bot egasi')+" bilan bog'laning.");
     }
 
+    // Bloklash tekshiruvi
+    var userProfile = await getUserProfile(uid, ctx);
+    if (userProfile.isBlocked) {
+      return ctx.reply(lang(ctx)==='uz'?'Siz bloklangansiz.':lang(ctx)==='en'?'You are blocked.':'Вы заблокированы.');
+    }
+
     // NUDGE — sessiyasiz birinchi xabarda bir marta ko'rsatiladi
     if (!ctx.session.chatNudgeSent && !ctx.session.activeSessionId) {
       ctx.session.chatNudgeSent = true;
       await ctx.reply(t('chat_nudge', lang(ctx)));
-      // Nudge yuborildi, lekin AI javob ham davom etadi
     }
 
-        // AI LIMIT — har user uchun o'z profili orqali tekshiriladi
-    var userProfile = await getUserProfile(uid);
+    // AI LIMIT — har user uchun o\'z profili orqali tekshiriladi
     var aiChk = await checkAILimit(userProfile, lang(ctx));
     if (!aiChk.allowed) return ctx.reply(aiChk.msg, aiChk.keyboard||{});
 
-    // FIX #6: typingInterval — try/catch tashqarisida var e'lon
+    // FIX #6: typingInterval — try/catch tashqarisida var e\'lon
     var typingInterval=null;
     try {
       await ctx.sendChatAction('typing');
@@ -1902,8 +2065,9 @@ async function launchUserBot(botConfig) {
       }
 
       var userMsg=text.toLowerCase().trim()==='davom'?'Yuqoridagi javobingizni davom ettir.':text;
-      var cfg2=Object.assign({},botConfig.toObject?botConfig.toObject():botConfig);
-      cfg2.activePersonaPrompt=activePersonaPrompt;
+      // Variant B: har user uchun shaxsiy AI sozlamalari
+      var cfg2 = getEffectiveCfg(botConfig, userProfile);
+      cfg2.activePersonaPrompt = activePersonaPrompt;
 
       var aiResult=await getAIResponse(cfg2,histMsgs,userMsg,ctx.from.first_name||'');
       // FIX #6: clearInterval har doim
@@ -1927,13 +2091,13 @@ async function launchUserBot(botConfig) {
       // Bot umumiy counter
       await UserBot.findByIdAndUpdate(botConfig._id, {$inc:{totalMessages:1}});
 
-      // Uzun javobni bo'lib yuborish (Telegram 4096 belgi chegarasi)
+      // Uzun javobni bo\'lib yuborish (Telegram 4096 belgi chegarasi)
       await sendLongMessage(ctx, aiReply, useHTML);
 
     } catch(err) {
       if (typingInterval){clearInterval(typingInterval);typingInterval=null;}
       console.error('['+botConfig.botUsername+'] xato:',err.message);
-      await ctx.reply("Hozir biroz muammo bor. Qayta urinib ko'ring! 🔄").catch(()=>{});
+      await ctx.reply("Hozir biroz muammo bor. Qayta urinib ko\'ring! 🔄").catch(()=>{});
     }
   });
 
@@ -1941,7 +2105,7 @@ async function launchUserBot(botConfig) {
   async function createSession(ctx, title) {
     var uid = String(ctx.from.id);
     var isOwn = uid === String(botConfig.ownerTelegramId);
-    var profile = await getUserProfile(uid);
+    var profile = await getUserProfile(uid, ctx);
     var chk = await checkSessionLimit(profile, lang(ctx));
     if (!chk.allowed) return ctx.reply(chk.msg, chk.keyboard||{});
     await UserProfile.findByIdAndUpdate(profile._id, {$inc:{monthlySessions:1}});
@@ -1954,7 +2118,7 @@ async function launchUserBot(botConfig) {
   }
 
   // ═══════════════════════════════════════════════
-  // BOT GRUPPAGA QO'SHILGANDA — Xush kelibsiz xabari
+  // BOT GRUPPAGA QO\'SHILGANDA — Xush kelibsiz xabari
   // ═══════════════════════════════════════════════
   bot.on('my_chat_member', async (ctx) => {
     try {
@@ -1965,7 +2129,7 @@ async function launchUserBot(botConfig) {
       if (!chat) return;
       if (chat.type !== 'group' && chat.type !== 'supergroup' && chat.type !== 'channel') return;
 
-      // Bot qo'shildi
+      // Bot qo\'shildi
       if (newStatus === 'member' || newStatus === 'administrator') {
         var { getOrCreateGroupProfile } = require('./utils/groupHandler');
         await getOrCreateGroupProfile(botConfig._id, { chat });
@@ -2003,7 +2167,7 @@ async function launchUserBot(botConfig) {
     var text = (ctx.message && (ctx.message.text || ctx.message.caption)) || '';
     if (!text) return;
 
-    // PPT trigger avval tekshiriladi (/ppt buyrug'i)
+    // PPT trigger avval tekshiriladi (/ppt buyrug\'i)
     var lc = text.trim().toLowerCase();
     if (lc.startsWith('/ppt')) {
       await handleGroupPpt(ctx, botConfig, botConfig.botUsername);
@@ -2030,7 +2194,7 @@ async function launchUserBot(botConfig) {
 
   bot.catch((err,ctx)=>{
     console.error('ERR @'+botConfig.botUsername+':',err.message);
-    if(ctx&&ctx.reply) ctx.reply("Xatolik yuz berdi. Qayta urinib ko'ring.").catch(()=>{});
+    if(ctx&&ctx.reply) ctx.reply("Xatolik yuz berdi. Qayta urinib ko\'ring.").catch(()=>{});
   });
 
   console.log('✅ @'+botConfig.botUsername+' boti ishga tushdi');

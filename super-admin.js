@@ -162,7 +162,7 @@ async function activateByUniqueId(ctx, uniqueId) {
 
     var resultText =
       '✅ ' + uniqueId + ' faollashtirildi!\n\n' +
-      'Foydalanuvchi: ' + (sub.firstName || "Noma'lum") + (sub.username ? ' @' + sub.username : '') + '\n' +
+      'Foydalanuvchi: ' + (sub.firstName || "Noma\'lum") + (sub.username ? ' @' + sub.username : '') + '\n' +
       'Tarif: ' + planName + '\n' +
       'Muddat: ' + expires + ' gacha' +
       (sent ? '' : '\n\n⚠️ Foydalanuvchiga xabar yuborilmadi (bot topilmadi)');
@@ -278,20 +278,241 @@ adminBot.action('subs_back', async function(ctx) {
 });
 
 // ═══════════════════════════════════════════════
-// 📋 FOYDALANUVCHILAR
+// 📋 FOYDALANUVCHILAR — To\'liq management
 // ═══════════════════════════════════════════════
+const USERS_PAGE = 15;
+
 adminBot.hears('📋 Foydalanuvchilar', async function(ctx) {
   ctx.session = {};
+  await showUsersList(ctx, 0, false);
+});
+
+async function showUsersList(ctx, page, edit) {
   var botDoc = await UserBot.findOne({ isActive: true });
   if (!botDoc) return ctx.reply('Bot topilmadi.');
-  var users = botDoc.allowedUsers || [];
-  if (!users.length) return ctx.reply('Hali foydalanuvchi yo\'q.');
-  var text = '👥 Foydalanuvchilar (' + users.length + ' ta):\n\n';
-  users.slice(0, 30).forEach(function(uid, i) {
-    text += (i+1) + '. ID: ' + uid + '\n';
+  var allIds = botDoc.allowedUsers || [];
+  if (!allIds.length) {
+    var msg = 'Hali foydalanuvchi yo\'q.';
+    if (edit) return safeEdit(ctx, msg);
+    return ctx.reply(msg);
+  }
+  var profiles = await UserProfile.find({ botId: botDoc._id, userTelegramId: { $in: allIds } })
+    .sort({ joinedAt: -1 }).skip(page * USERS_PAGE).limit(USERS_PAGE);
+  var total    = allIds.length;
+  var tp       = Math.ceil(total / USERS_PAGE) || 1;
+  var blocked  = await UserProfile.countDocuments({ botId: botDoc._id, isBlocked: true });
+  var header   = '👥 Foydalanuvchilar (' + total + ' ta) — ' + (page+1) + '/' + tp + ' sahifa' +
+                 (blocked ? '\n🚫 Bloklangan: ' + blocked + ' ta' : '') + '\n\nBirorini tanlang:';
+
+  var btns = profiles.map(function(p) {
+    var name  = (p.firstName || ('ID:' + p.userTelegramId)).slice(0, 18);
+    var uname = p.telegramUsername ? ' @' + p.telegramUsername.slice(0,10) : '';
+    var plan  = p.currentPlan !== 'free' ? ' ' + (PLAN_NAMES[p.currentPlan]||'') : '';
+    var blk   = p.isBlocked ? ' 🚫' : '';
+    return [Markup.button.callback(name + uname + plan + blk, 'usr_view_' + p.userTelegramId)];
   });
-  if (users.length > 30) text += '\n... va yana ' + (users.length - 30) + ' ta';
-  await ctx.reply(text);
+
+  // Profili yo\'q userlar (eski)
+  var withProfile = profiles.map(function(p){ return p.userTelegramId; });
+  var noProf = allIds.filter(function(id){ return !withProfile.includes(id); }).slice(0, 3);
+  noProf.forEach(function(id){ btns.push([Markup.button.callback('ID: ' + id, 'usr_view_' + id)]); });
+
+  var nav = [];
+  if (page > 0)    nav.push(Markup.button.callback('◀️', 'usr_pg_' + (page-1)));
+  if (page < tp-1) nav.push(Markup.button.callback('▶️', 'usr_pg_' + (page+1)));
+  if (nav.length)  btns.push(nav);
+  btns.push([Markup.button.callback('🔍 Qidirish', 'usr_search_btn')]);
+
+  if (edit) await safeEdit(ctx, header, Markup.inlineKeyboard(btns));
+  else       await ctx.reply(header, Markup.inlineKeyboard(btns));
+}
+
+adminBot.action(/^usr_pg_(\d+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  await showUsersList(ctx, parseInt(ctx.match[1]), true);
+});
+
+adminBot.action('usr_search_btn', async function(ctx) {
+  await ctx.answerCbQuery();
+  ctx.session = { step: 'search_user' };
+  await safeEdit(ctx, 'Foydalanuvchi Telegram ID yoki @username kiriting:');
+});
+
+// ── User profili ──
+adminBot.action(/^usr_view_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var uid2   = ctx.match[1];
+  var botDoc = await UserBot.findOne({ isActive: true });
+  var prof   = await UserProfile.findOne({ botId: botDoc._id, userTelegramId: uid2 });
+  var sub    = await Subscription.findOne({ telegramId: uid2, botId: botDoc._id, status: { $in: ['active','grace'] } }).sort({ activatedAt: -1 });
+
+  var name   = (prof && prof.firstName)         || 'Noma\'lum';
+  var uname  = (prof && prof.telegramUsername)  ? '@' + prof.telegramUsername : '—';
+  var plan   = (prof && PLAN_NAMES[prof.currentPlan]) || '📦 Free';
+  var joined = (prof && prof.joinedAt)          ? new Date(prof.joinedAt).toLocaleDateString('ru-RU') : '—';
+  var msgs   = (prof && prof.totalMessages)     || 0;
+  var blk    = prof  && prof.isBlocked;
+  var aiNom  = (prof && prof.customBotName)     || '—';
+  var aiPers = (prof && prof.customPersonality) || '—';
+  var aiLang = (prof && prof.customLanguage)    || '—';
+  var hasEx  = prof  && prof.customExtra;
+  var subTxt = sub && sub.expiresAt ? sub.expiresAt.toLocaleDateString('ru-RU') + ' gacha' : '—';
+
+  var txt =
+    '👤 Foydalanuvchi\n\n' +
+    'Ism: ' + name + '\n' +
+    'Username: ' + uname + '\n' +
+    'ID: ' + uid2 + '\n' +
+    'Qo\'shilgan: ' + joined + '\n' +
+    'Xabarlar: ' + msgs + ' ta\n' +
+    'Plan: ' + plan + '\n' +
+    'Obuna: ' + subTxt +
+    (blk ? '\n🚫 BLOKLANGAN' : '') +
+    '\n\n🤖 AI sozlamalari:\n' +
+    'Nom: ' + aiNom + '  Uslub: ' + aiPers + '  Til: ' + aiLang + '\n' +
+    'Prompt: ' + (hasEx ? '✅ bor' : '—');
+
+  var row1 = [Markup.button.callback('⭐ Plan', 'usr_plan_' + uid2), Markup.button.callback('🔄 Reset', 'usr_reset_' + uid2)];
+  var row2 = [Markup.button.callback('🗑 Xotira', 'usr_clrmem_' + uid2), Markup.button.callback('✉️ Xabar', 'usr_msg_' + uid2)];
+  var row3 = blk
+    ? [Markup.button.callback('✅ Blokdan chiqar', 'usr_unblock_' + uid2)]
+    : [Markup.button.callback('🚫 Bloklash', 'usr_block_' + uid2)];
+  var row4 = [Markup.button.callback('🗑 O\'chirish', 'usr_del_' + uid2), Markup.button.callback('◀️ Ro\'yxat', 'usr_back_list')];
+
+  await safeEdit(ctx, txt, Markup.inlineKeyboard([row1, row2, row3, row4]));
+});
+
+adminBot.action('usr_back_list', async function(ctx) {
+  await ctx.answerCbQuery();
+  await showUsersList(ctx, 0, true);
+});
+
+// ── Plan o\'zgartirish ──
+adminBot.action(/^usr_plan_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var uid2 = ctx.match[1];
+  await safeEdit(ctx, '⭐ Plan tanlang — ID: ' + uid2, Markup.inlineKeyboard([
+    [Markup.button.callback('📦 Free',    'usr_setplan_' + uid2 + '_free')],
+    [Markup.button.callback('⭐ Starter', 'usr_setplan_' + uid2 + '_starter')],
+    [Markup.button.callback('🚀 Pro',     'usr_setplan_' + uid2 + '_pro')],
+    [Markup.button.callback('💎 Premium', 'usr_setplan_' + uid2 + '_premium')],
+    [Markup.button.callback('◀️ Orqaga',  'usr_view_' + uid2)]
+  ]));
+});
+
+adminBot.action(/^usr_setplan_(.+)_(free|starter|pro|premium)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var uid2 = ctx.match[1]; var plan = ctx.match[2];
+  var botDoc = await UserBot.findOne({ isActive: true });
+  await UserProfile.findOneAndUpdate(
+    { botId: botDoc._id, userTelegramId: uid2 },
+    { $set: { currentPlan: plan, updatedAt: new Date() } },
+    { upsert: true }
+  );
+  for (var [, rb] of activeBots) {
+    if (rb && rb.telegram) {
+      try { await rb.telegram.sendMessage(uid2, '⭐ Sizning planningiz ' + (PLAN_NAMES[plan]||plan) + ' ga o\'zgardi!'); } catch(_) {}
+      break;
+    }
+  }
+  await safeEdit(ctx, '✅ Plan o\'zgardi: ' + (PLAN_NAMES[plan]||plan) + ' — ' + uid2);
+});
+
+// ── Limit reset ──
+adminBot.action(/^usr_reset_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var uid2 = ctx.match[1]; var botDoc = await UserBot.findOne({ isActive: true });
+  await UserProfile.findOneAndUpdate(
+    { botId: botDoc._id, userTelegramId: uid2 },
+    { $set: { monthlyMessages:0, monthlyPpt:0, monthlyPptPro:0, monthlySessions:0, monthlyReset:'', updatedAt:new Date() } }
+  );
+  await safeEdit(ctx, '✅ ' + uid2 + ' limiti reset qilindi!');
+});
+
+// ── Xotirani tozalash ──
+adminBot.action(/^usr_clrmem_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var uid2 = ctx.match[1];
+  await safeEdit(ctx, '🗑 Xotirani tozalash — ' + uid2 + '\n\nBarcha suhbat tarixi o\'chiriladi. Davom etasizmi?',
+    Markup.inlineKeyboard([
+      [Markup.button.callback('✅ Ha', 'usr_clrmem_do_' + uid2)],
+      [Markup.button.callback('❌ Bekor', 'usr_view_' + uid2)]
+    ])
+  );
+});
+
+adminBot.action(/^usr_clrmem_do_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var uid2 = ctx.match[1]; var botDoc = await UserBot.findOne({ isActive: true });
+  await ChatHistory.findOneAndUpdate(
+    { botId: botDoc._id, userTelegramId: uid2 },
+    { $set: { messages: [], updatedAt: new Date() } }
+  );
+  await safeEdit(ctx, '✅ ' + uid2 + ' xotirasi tozalandi!');
+});
+
+// ── Userga xabar ──
+adminBot.action(/^usr_msg_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  ctx.session = { step: 'send_user_msg', targetUid: ctx.match[1] };
+  await safeEdit(ctx, '✉️ Xabar matnini yozing:\nQabul qiluvchi: ' + ctx.match[1]);
+});
+
+// ── Bloklash ──
+adminBot.action(/^usr_block_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var uid2 = ctx.match[1]; var botDoc = await UserBot.findOne({ isActive: true });
+  await UserProfile.findOneAndUpdate(
+    { botId: botDoc._id, userTelegramId: uid2 },
+    { $set: { isBlocked: true, blockedAt: new Date(), updatedAt: new Date() } },
+    { upsert: true }
+  );
+  await safeEdit(ctx, '🚫 ' + uid2 + ' bloklandi!');
+  console.log('[Admin] Bloklandi:', uid2);
+});
+
+// ── Blokdan chiqarish ──
+adminBot.action(/^usr_unblock_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var uid2 = ctx.match[1]; var botDoc = await UserBot.findOne({ isActive: true });
+  await UserProfile.findOneAndUpdate(
+    { botId: botDoc._id, userTelegramId: uid2 },
+    { $set: { isBlocked: false, blockedAt: null, blockedReason: '', updatedAt: new Date() } }
+  );
+  await safeEdit(ctx, '✅ ' + uid2 + ' blokdan chiqarildi!');
+});
+
+// ── O\'chirish ──
+adminBot.action(/^usr_del_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery();
+  var uid2 = ctx.match[1];
+  await safeEdit(ctx, '🗑 O\'chirish: ' + uid2 + '\n\nBotdan chiqariladi, profil, xotira, sessiyalar o\'chiriladi. Davom etasizmi?',
+    Markup.inlineKeyboard([
+      [Markup.button.callback('✅ Ha', 'usr_del_do_' + uid2)],
+      [Markup.button.callback('❌ Bekor', 'usr_view_' + uid2)]
+    ])
+  );
+});
+
+adminBot.action(/^usr_del_do_(.+)$/, async function(ctx) {
+  await ctx.answerCbQuery('O\'chirilmoqda...');
+  var uid2 = ctx.match[1]; var botDoc = await UserBot.findOne({ isActive: true });
+  if (!botDoc) return safeEdit(ctx, 'Bot topilmadi.');
+  // allowedUsers dan chiqarish
+  await UserBot.findByIdAndUpdate(botDoc._id, { $pull: { allowedUsers: uid2 } });
+  for (var [, rb] of activeBots) {
+    if (rb && rb.botConfig) {
+      rb.botConfig.allowedUsers = (rb.botConfig.allowedUsers||[]).filter(function(id){ return id !== uid2; });
+    }
+  }
+  // Ma'lumotlarni o\'chirish
+  await UserProfile.findOneAndDelete({ botId: botDoc._id, userTelegramId: uid2 });
+  await ChatHistory.findOneAndDelete({ botId: botDoc._id, userTelegramId: uid2 });
+  try { var CS = require('./models/ChatSession'); await CS.deleteMany({ botId: botDoc._id, userTelegramId: uid2 }); } catch(_) {}
+  try { var PE = require('./models/Persona');     await PE.updateMany({ botId: botDoc._id, userTelegramId: uid2 }, { $set: { isActive: false } }); } catch(_) {}
+
+  await safeEdit(ctx, '✅ Foydalanuvchi o\'chirildi: ' + uid2);
+  console.log('[Admin] O\'chirildi:', uid2);
 });
 
 // ═══════════════════════════════════════════════
@@ -299,7 +520,7 @@ adminBot.hears('📋 Foydalanuvchilar', async function(ctx) {
 // ═══════════════════════════════════════════════
 adminBot.hears('🔍 Qidirish', async function(ctx) {
   ctx.session = { step: 'search_user' };
-  await ctx.reply('Foydalanuvchi Telegram ID sini kiriting:', Markup.removeKeyboard());
+  await ctx.reply('Foydalanuvchi Telegram ID yoki @username ni kiriting:', Markup.removeKeyboard());
 });
 
 // ═══════════════════════════════════════════════
@@ -357,7 +578,7 @@ adminBot.on('text', async function(ctx) {
   var mainBtns = ['⭐ Obunalar', '📊 Statistika', '📋 Foydalanuvchilar', '💬 Gruppalar', '🔍 Qidirish', '📰 Yangiliklar', '📢 Xabar yuborish'];
   if (mainBtns.indexOf(text) !== -1) return;
 
-  // Gruppa admin qo'shish
+  // Gruppa admin qo\'shish
   if (step === 'grp_add_admin') {
     var adminId = text.trim();
     if (!/^\d+$/.test(adminId)) {
@@ -381,21 +602,55 @@ adminBot.on('text', async function(ctx) {
   // Foydalanuvchi qidirish
   if (step === 'search_user') {
     ctx.session = {};
-    var searchId = text.trim();
-    var botDoc = await UserBot.findOne({ isActive: true });
-    var found  = botDoc && botDoc.allowedUsers.includes(searchId);
-    var sub    = await Subscription.findOne({ telegramId: searchId }).sort({ createdAt: -1 });
-    if (!found && !sub) return ctx.reply('Foydalanuvchi topilmadi: ' + searchId, Markup.keyboard([['⭐ Obunalar','📊 Statistika'],['📋 Foydalanuvchilar','🔍 Qidirish'],['📰 Yangiliklar','📢 Xabar yuborish']]).resize());
-    var info = '👤 Foydalanuvchi: ' + searchId + '\n\n';
-    if (found) info += '✅ Botda ro\'yxatda\n';
-    if (sub) {
-      info += '⭐ Oxirgi obuna: ' + (PLAN_NAMES[sub.plan] || sub.plan) + '\n';
-      info += '   Status: ' + sub.status + '\n';
-      info += '   ID: ' + sub.uniqueId + '\n';
-      if (sub.expiresAt) info += '   Muddat: ' + sub.expiresAt.toLocaleDateString('ru-RU') + ' gacha\n';
+    var searchRaw = text.trim().replace('@','');
+    var botDoc2   = await UserBot.findOne({ isActive: true });
+    var prof2     = await UserProfile.findOne({
+      botId: botDoc2._id,
+      $or: [{ userTelegramId: searchRaw }, { telegramUsername: searchRaw }]
+    });
+    var realId = prof2 ? prof2.userTelegramId : searchRaw;
+    var found2 = botDoc2 && botDoc2.allowedUsers.includes(realId);
+    if (!found2 && !prof2) {
+      return ctx.reply('Foydalanuvchi topilmadi: ' + searchRaw, Markup.keyboard([
+        ['⭐ Obunalar','📊 Statistika'],['📋 Foydalanuvchilar','💬 Gruppalar'],
+        ['🔍 Qidirish','📰 Yangiliklar'],['📢 Xabar yuborish']
+      ]).resize());
     }
-    await ctx.reply(info, Markup.keyboard([['⭐ Obunalar','📊 Statistika'],['📋 Foydalanuvchilar','🔍 Qidirish'],['📰 Yangiliklar','📢 Xabar yuborish']]).resize());
+    var sub2  = await Subscription.findOne({ telegramId: realId, botId: botDoc2._id }).sort({ createdAt: -1 });
+    var info2 = '👤 ' + ((prof2 && prof2.firstName) || realId) + '\n' +
+      'ID: ' + realId + '\n' +
+      'Plan: ' + ((prof2 && PLAN_NAMES[prof2.currentPlan]) || '📦 Free') + '\n' +
+      'Xabarlar: ' + ((prof2 && prof2.totalMessages) || 0) + '\n' +
+      (sub2 ? 'Obuna: ' + (PLAN_NAMES[sub2.plan]||sub2.plan) + ' — ' + sub2.status : '') +
+      ((prof2 && prof2.isBlocked) ? '\n🚫 BLOKLANGAN' : '');
+    await ctx.reply(info2, Markup.inlineKeyboard([
+      [Markup.button.callback('⭐ Plan', 'usr_plan_' + realId),
+       Markup.button.callback('🚫 Bloklash', 'usr_block_' + realId)],
+      [Markup.button.callback('🗑 O\'chirish', 'usr_del_' + realId),
+       Markup.button.callback('📋 To\'liq profil', 'usr_view_' + realId)]
+    ]));
     return;
+  }
+
+  // Userga xabar yuborish
+  if (step === 'send_user_msg') {
+    var target = ctx.session.targetUid;
+    ctx.session = {};
+    if (!target) return ctx.reply('Xato: target topilmadi.');
+    for (var [, rb] of activeBots) {
+      if (rb && rb.telegram) {
+        try {
+          await rb.telegram.sendMessage(target, '📨 Admin xabari:\n\n' + text.trim());
+          return ctx.reply('✅ Xabar yuborildi!', Markup.keyboard([
+            ['⭐ Obunalar','📊 Statistika'],['📋 Foydalanuvchilar','💬 Gruppalar'],
+            ['🔍 Qidirish','📰 Yangiliklar'],['📢 Xabar yuborish']
+          ]).resize());
+        } catch(e) {
+          return ctx.reply('❌ Yuborib bo\'lmadi: ' + e.message);
+        }
+      }
+    }
+    return ctx.reply('❌ Bot instance topilmadi.');
   }
 
   // Yangilik yaratish wizard
@@ -766,7 +1021,7 @@ adminBot.action('grp_back_list', async function(ctx) {
   await showGroupsList(ctx, true);
 });
 
-// ── Gruppa plan o'zgartirish ──
+// ── Gruppa plan o\'zgartirish ──
 adminBot.action(/^grp_plan_(.+)$/, async function(ctx) {
   await ctx.answerCbQuery();
   var g = await GroupProfile.findById(ctx.match[1]);
@@ -892,7 +1147,7 @@ adminBot.action(/^grp_reset_(.+)$/, async function(ctx) {
   await safeEdit(ctx, '✅ ' + (g.chatTitle || g.chatId) + ' limiti reset qilindi!');
 });
 
-// ── Gruppa o'chirish ──
+// ── Gruppa o\'chirish ──
 adminBot.action(/^grp_del_(.+)$/, async function(ctx) {
   await ctx.answerCbQuery();
   var g = await GroupProfile.findById(ctx.match[1]);
@@ -913,7 +1168,7 @@ adminBot.action(/^grp_del_do_(.+)$/, async function(ctx) {
   await showGroupsList(ctx, true);
 });
 
-// ── Yordamchi: gruppa ko'rinishiga qaytish ──
+// ── Yordamchi: gruppa ko\'rinishiga qaytish ──
 async function showGroupView(ctx, g) {
   var typeStr = g.chatType === 'channel' ? '📢 Kanal' : '👥 Gruppa';
   var planStr = GROUP_PLAN_NAMES[g.currentPlan] || g.currentPlan;
